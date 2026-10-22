@@ -1,0 +1,22 @@
+[data]
+frames = 199319
+fps = 25
+pitch_length_m = 105.3
+pitch_width_m = 68.0
+
+[model]
+distance_scale_m = 5.0
+dead_ball_min_gap_frames = 25
+dead_ball_max_team_speed_m_s = 0.5
+dead_ball_min_tracks_per_team = 4
+dead_ball_evidence_score = 0.85
+
+[decoder]
+switch_threshold = 0.55
+switch_margin = 0.15
+switch_frames = 3
+start_threshold = 0.45
+continue_threshold = 0.35
+dead_threshold = 0.75
+dead_margin = 0.15
+missing_hold_frames = 15
