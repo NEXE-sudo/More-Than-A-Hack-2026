@@ -84,7 +84,9 @@ SCENARIO_DESCRIPTIONS = {
     "boundary_start": "One H-to-A possession change near the sequence start.",
     "boundary_end": "One H-to-A possession change near the sequence end.",
     "contradictory_evidence": "Persistent away proximity conflicts with H ground-truth labels.",
-    "rapid_ball_movement": "A short high-speed ball movement during uninterrupted H possession.",
+    "rapid_ball_movement": (
+        "A pitch-safe 12 m/s ball movement lasting about 0.5 seconds during H possession."
+    ),
     "brief_nearest_player_blip": "A brief away-nearest-player observation during H possession.",
 }
 RESTART_TYPES = (
@@ -99,11 +101,19 @@ RESTART_TYPES = (
 
 @dataclass(frozen=True)
 class SyntheticSequence:
+    """Synthetic observations plus ground truth kept separate from model features."""
+
     family: str
     seed: int
     features: dict[str, np.ndarray]
     labels: np.ndarray
     sequence_starts: np.ndarray
+    ball_state_m: np.ndarray
+
+
+RAPID_MOVEMENT_START_FRACTION = 0.45
+RAPID_MOVEMENT_DURATION_SECONDS = 0.5
+RAPID_MOVEMENT_SPEED_M_S = 12.0
 
 
 def _possession_schedule(family: str, n_frames: int) -> tuple[np.ndarray, np.ndarray]:
@@ -217,6 +227,7 @@ def generate_synthetic_sequence(
     labels, sequence_starts = _possession_schedule(family_name, n_frames)
     players = np.full((n_frames, n_tracks, 2), np.nan, dtype=np.float32)
     ball = np.full((n_frames, 2), np.nan, dtype=np.float32)
+    ball_state_m = np.full((n_frames, 2), np.nan, dtype=np.float64)
     speeds = np.full((n_frames, n_tracks), np.nan, dtype=np.float32)
     teams = np.repeat(np.arange(2, dtype=np.int8), players_per_team)
     scales = np.asarray([pitch_length_m, pitch_width_m])
@@ -240,13 +251,13 @@ def generate_synthetic_sequence(
             pass_stop = min(n_frames, int(switch_frame) + 1)
             delta = distance * np.asarray([np.cos(angle), np.sin(angle)])
             pass_windows.append((pass_start, pass_stop, delta))
-    elif family_name == "rapid_ball_movement":
-        pass_start = round(0.45 * n_frames)
-        pass_stop = max(pass_start + 2, round(0.55 * n_frames))
-        angle = rng.uniform(0.0, 2.0 * np.pi)
-        distance = rng.uniform(24.0, 30.0)
-        delta = distance * np.asarray([np.cos(angle), np.sin(angle)])
-        pass_windows.append((pass_start, min(n_frames, pass_stop), delta))
+    rapid_start = round(RAPID_MOVEMENT_START_FRACTION * n_frames)
+    rapid_steps = max(1, round(RAPID_MOVEMENT_DURATION_SECONDS * fps))
+    if family_name == "rapid_ball_movement" and rapid_start + rapid_steps >= n_frames:
+        raise ValueError(
+            "rapid_ball_movement requires enough frames for its movement interval; "
+            "increase duration_seconds"
+        )
     active_pass: tuple[int, int, np.ndarray, np.ndarray] | None = None
 
     for frame, label in enumerate(labels):
@@ -259,6 +270,19 @@ def generate_synthetic_sequence(
             active_pass = None
         if active_pass is not None and frame >= active_pass[1]:
             active_pass = None
+        if family_name == "rapid_ball_movement" and frame == rapid_start:
+            lower = scales * 0.12
+            upper = scales * 0.88
+            positive_room = upper - state
+            negative_room = state - lower
+            directional_room = np.maximum(positive_room, negative_room)
+            axis = int(np.argmax(directional_room))
+            direction = 1.0 if positive_room[axis] >= negative_room[axis] else -1.0
+            intended_distance = RAPID_MOVEMENT_SPEED_M_S * rapid_steps / fps
+            distance = min(intended_distance, 0.8 * directional_room[axis])
+            delta = np.zeros(2, dtype=np.float64)
+            delta[axis] = direction * distance
+            active_pass = (rapid_start, rapid_start + rapid_steps + 1, delta, state.copy())
         for pass_start, pass_stop, delta in pass_windows:
             if frame == pass_start:
                 active_pass = (pass_start, pass_stop, delta, state.copy())
@@ -274,6 +298,7 @@ def generate_synthetic_sequence(
             [pitch_length_m * 0.12, pitch_width_m * 0.12],
             [pitch_length_m * 0.88, pitch_width_m * 0.88],
         )
+        ball_state_m[frame] = state
         is_dead = label == "D"
         active_team = 0 if label == "H" else 1 if label == "A" else -1
         if active_team >= 0 and label != previous_label:
@@ -448,4 +473,11 @@ def generate_synthetic_sequence(
                 }
             )
     features.update(tagging_context(events, n_frames))
-    return SyntheticSequence(family_name, seed, features, labels, sequence_starts)
+    return SyntheticSequence(
+        family_name,
+        seed,
+        features,
+        labels,
+        sequence_starts,
+        ball_state_m,
+    )

@@ -45,7 +45,7 @@ frequency or football dynamics.
 | `boundary_start` | One H-to-A possession change near sequence start. |
 | `boundary_end` | One H-to-A possession change near sequence end. |
 | `contradictory_evidence` | Persistent away proximity conflicts with H ground-truth labels. |
-| `rapid_ball_movement` | A short high-speed ball movement during uninterrupted H possession. |
+| `rapid_ball_movement` | A pitch-safe ball movement targeting 12 m/s for 0.5 seconds during uninterrupted H possession. |
 | `brief_nearest_player_blip` | A brief away-nearest-player observation during H possession. |
 
 The following accepted names are true aliases; generation is identical to the stated canonical
@@ -77,6 +77,18 @@ rate, pitch dimensions, player count, track availability, ball visibility and co
 restart scenario supports throw-ins, corners, free kicks, goal kicks, kick-offs and other stoppages;
 throw-ins deliberately carry `Team=N/A`. For other restart types, set-piece team context matches the
 team holding the restart in ground truth.
+
+The rapid-movement fixture starts at 45% of the sequence and constructs a straight-line trajectory
+over `round(0.5 * fps)` frame intervals. At the default 25 fps this is 12 intervals (0.48 seconds)
+and 5.76 metres of travel, for 12 m/s.
+The direction is chosen along the pitch axis with the most room, and travel is capped to retain a
+margin inside the generator's 12%-88% pitch bounds. On unusually small pitches or near-boundary
+starting states, that cap can reduce the target speed. `SyntheticSequence.ball_state_m` exposes the
+resulting ground-truth trajectory for simulator tests only; it is separate from `features` and is
+never passed to the model. Model input still uses intermittently visible, coordinate-noisy ball
+observations. Consequently, observed frame-to-frame speed can have noise spikes and is not itself
+a ground-truth speed oracle. This controlled impulse validates the feature path, not the frequency
+or realism of such passes in matches.
 
 Run the complete fixed matrix:
 

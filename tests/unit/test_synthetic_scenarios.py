@@ -22,7 +22,9 @@ def test_scenario_generator_is_reproducible_and_keeps_labels_out_of_features(fam
     second = generate_synthetic_sequence(family, 31, duration_seconds=2.0, fps=10)
     assert np.array_equal(first.labels, second.labels)
     assert np.array_equal(first.features["ball_visible"], second.features["ball_visible"])
+    np.testing.assert_array_equal(first.ball_state_m, second.ball_state_m)
     assert not np.isin("labels", first.features)
+    assert "ball_state_m" not in first.features
     assert first.sequence_starts.shape == first.labels.shape
 
 
@@ -213,11 +215,78 @@ def test_dead_ball_duration_and_consecutive_restart_intervals_are_observable():
     assert consecutive.features["tagged_home"][intervals[1][0] : intervals[1][1]].all()
 
 
-def test_rapid_ball_movement_and_brief_nearest_player_blip_are_measurable():
-    rapid = generate_synthetic_sequence("rapid_ball_movement", 11, duration_seconds=16)
+def test_rapid_ball_movement_has_a_pitch_safe_physical_trajectory_and_noisy_observations():
+    duration = 16
+    fps = 25
+    rapid = generate_synthetic_sequence(
+        "rapid_ball_movement",
+        11,
+        duration_seconds=duration,
+        fps=fps,
+        ball_visibility=0.70,
+        coordinate_noise_m=0.45,
+    )
+    repeated = generate_synthetic_sequence(
+        "rapid_ball_movement",
+        11,
+        duration_seconds=duration,
+        fps=fps,
+        ball_visibility=0.70,
+        coordinate_noise_m=0.45,
+    )
+    n_frames = duration * fps
+    start = round(0.45 * n_frames)
+    steps = round(0.5 * fps)
+    stop = start + steps + 1
+    path = rapid.ball_state_m[start:stop]
+    movement = path[-1] - path[0]
+    expected_speed = np.linalg.norm(movement) / (steps / fps)
+
     assert np.all(rapid.labels == "H")
-    rapid_window = rapid.features["ball_speed_m_s"][180:220]
-    assert np.nanmax(rapid_window) > 20.0
+    np.testing.assert_array_equal(rapid.ball_state_m, repeated.ball_state_m)
+    np.testing.assert_array_equal(rapid.features["ball_visible"], repeated.features["ball_visible"])
+    assert np.isclose(expected_speed, 12.0, rtol=0.02)
+    np.testing.assert_allclose(np.linalg.norm(np.diff(path, axis=0), axis=1), 12.0 / fps, atol=1e-6)
+
+    lower = np.asarray([105.3, 68.0]) * 0.12
+    upper = np.asarray([105.3, 68.0]) * 0.88
+    assert np.all(path >= lower)
+    assert np.all(path <= upper)
+    assert np.isfinite(rapid.ball_state_m).all()
+    assert "ball_state_m" not in rapid.features
+
+    observed = np.column_stack(
+        [rapid.features["ball_x_m"][start:stop], rapid.features["ball_y_m"][start:stop]]
+    )
+    visible = np.isfinite(observed).all(axis=1)
+    assert visible.sum() >= 6
+    direction = movement / np.linalg.norm(movement)
+    projected = observed[visible] @ direction
+    observed_times = np.flatnonzero(visible) / fps
+    observed_speed = np.polyfit(observed_times, projected, 1)[0]
+    assert abs(observed_speed - expected_speed) < 5.0
+
+    feature_speed = rapid.features["ball_speed_m_s"][start:stop]
+    feature_motion = np.column_stack(
+        [rapid.features["ball_dx_m"][start:stop], rapid.features["ball_dy_m"][start:stop]]
+    )
+    valid_motion = rapid.features["ball_motion_reliable"][start:stop]
+    np.testing.assert_allclose(
+        feature_speed[valid_motion],
+        np.linalg.norm(feature_motion[valid_motion], axis=1) * fps,
+        rtol=1e-5,
+    )
+    other_seed = generate_synthetic_sequence(
+        "rapid_ball_movement", 29, duration_seconds=duration, fps=fps
+    )
+    other_path = other_seed.ball_state_m[start:stop]
+    assert np.all(other_seed.labels == "H")
+    assert not np.array_equal(rapid.features["ball_visible"], other_seed.features["ball_visible"])
+    assert np.isclose(
+        np.linalg.norm(other_path[-1] - other_path[0]) / (steps / fps),
+        12.0,
+        rtol=0.02,
+    )
 
     blip = generate_synthetic_sequence("brief_nearest_player_blip", 11, duration_seconds=16)
     start, stop = round(0.48 * 400), round(0.52 * 400)
