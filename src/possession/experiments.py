@@ -18,7 +18,9 @@ from possession.models.baseline import (
 )
 from possession.synthetic import (
     CANONICAL_SCENARIOS,
+    DEPRECATED_SCENARIOS,
     SCENARIO_ALIASES,
+    SCENARIO_DESCRIPTIONS,
     SCENARIOS,
     generate_synthetic_sequence,
 )
@@ -153,6 +155,13 @@ def run_experiments(
         raise ValueError("at least one deterministic seed is required")
     if len(set(seeds)) != len(seeds):
         raise ValueError("seeds must be unique to avoid duplicate runs")
+    deprecated = next(
+        (scenario for scenario in scenarios if scenario in DEPRECATED_SCENARIOS), None
+    )
+    if deprecated is not None:
+        raise ValueError(
+            f"synthetic scenario {deprecated!r} is deprecated: {DEPRECATED_SCENARIOS[deprecated]}"
+        )
     if not scenarios or any(scenario not in SCENARIOS for scenario in scenarios):
         raise ValueError("scenarios must be selected from the predefined synthetic families")
     selected_scenarios = tuple(
@@ -251,6 +260,9 @@ def run_experiments(
                 "requested_scenarios": list(scenarios),
                 "scenarios": list(selected_scenarios),
                 "scenario_aliases_collapsed": aliases_collapsed,
+                "scenario_descriptions": SCENARIO_DESCRIPTIONS,
+                "scenario_alias_registry": SCENARIO_ALIASES,
+                "deprecated_scenario_registry": DEPRECATED_SCENARIOS,
                 "synthetic_config": synthetic_config,
                 "duration_seconds": duration_seconds,
                 "experiments": list(EXPERIMENTS),
@@ -275,22 +287,60 @@ def run_experiments(
         f"- Seeds: {', '.join(map(str, seeds))}",
         f"- Effective scenario families ({len(selected_scenarios)}): "
         f"{', '.join(selected_scenarios)}",
+        f"- Configurations ({len(EXPERIMENTS)}): "
+        f"{', '.join(str(experiment['name']) for experiment in EXPERIMENTS)}",
+        f"- Total runs: {len(rows)}",
         f"- Sequence duration: {duration_seconds:g} seconds",
         f"- Runs per configuration: {len(seeds) * len(selected_scenarios)}",
         "",
-        "Alias inputs are normalized to canonical generators and counted only once. These "
-        "descriptive means and standard deviations are pooled over scenario/seed cases; they are "
-        "not confidence intervals and do not establish independent scenario sampling.",
+        f"- Requested scenario names: {', '.join(scenarios)}",
         "",
-        "## Aggregate results",
+        "Canonical scenarios and their generated conditions:",
         "",
-        "Mean ± sample SD across canonical scenario/seed runs. Frame rows are not independent "
-        "observations.",
-        "",
-        "| Configuration | macro-F1 mean ± SD | spellF1 mean ± SD | switches/min | "
-        "boundary error (frames) |",
-        "|---|---:|---:|---:|---:|",
+        "| Canonical scenario | Generated condition |",
+        "|---|---|",
     ]
+    report_lines.extend(
+        f"| {scenario} | {SCENARIO_DESCRIPTIONS[scenario]} |" for scenario in selected_scenarios
+    )
+    report_lines.extend(
+        (
+            "",
+            "Declared true aliases (canonical target): "
+            + (
+                ", ".join(
+                    f"`{alias}` → `{canonical}`" for alias, canonical in SCENARIO_ALIASES.items()
+                )
+                or "none"
+            )
+            + ".",
+            "Deprecated scenario names: "
+            + (
+                "; ".join(
+                    f"`{scenario}`: {reason}" for scenario, reason in DEPRECATED_SCENARIOS.items()
+                )
+                or "none"
+            )
+            + ".",
+            "Alias inputs are normalized to canonical generators and counted only once. Requested "
+            "distinct canonical conditions are never substituted. These descriptive means and "
+            "standard deviations are pooled over scenario/seed cases; they are not confidence "
+            "intervals and do not establish independent scenario sampling.",
+        )
+    )
+    report_lines.extend(
+        (
+            "",
+            "## Aggregate results",
+            "",
+            "Mean ± sample SD across canonical scenario/seed runs. Frame rows are not independent "
+            "observations.",
+            "",
+            "| Configuration | macro-F1 mean ± SD | spellF1 mean ± SD | switches/min | "
+            "boundary error (frames) |",
+            "|---|---:|---:|---:|---:|",
+        )
+    )
     for name, group in grouped.items():
         macro_mean, macro_sd = _mean_sd(group, "macro_f1")
         spell_mean, spell_sd = _mean_sd(group, "spell_f1_mean")

@@ -17,7 +17,7 @@ from possession.features.cache import save_feature_cache
 from possession.features.context import tagging_context
 from possession.features.tracking import extract_tracking_features
 from possession.pipeline import predict
-from possession.synthetic import SCENARIOS
+from possession.synthetic import CANONICAL_SCENARIOS
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -74,7 +74,12 @@ def _parser() -> argparse.ArgumentParser:
     synthetic = commands.add_parser("run-synthetic-experiments")
     synthetic.add_argument("--output-dir", type=Path, default=Path("outputs/synthetic-experiments"))
     synthetic.add_argument("--seeds", type=int, nargs="+", default=(11, 29, 47))
-    synthetic.add_argument("--scenarios", nargs="+", choices=SCENARIOS, default=SCENARIOS)
+    synthetic.add_argument(
+        "--scenarios",
+        nargs="+",
+        default=CANONICAL_SCENARIOS,
+        help="canonical scenario names or declared aliases",
+    )
     synthetic.add_argument("--duration-seconds", type=float, default=16.0)
     synthetic.set_defaults(action=_run_synthetic_experiments)
     return parser

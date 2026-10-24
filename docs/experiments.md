@@ -19,16 +19,64 @@ The metric implementation was checked in the unchanged sibling repository at
 ## Synthetic harness and reproducible command
 
 The local generator creates frame-aligned labels independently of the feature dictionary and
-deterministically generates tracking positions from explicit seeds. It includes stable home/away,
-possession turnovers with short/long pass flight intervals, an abrupt interception, contested/
-ungraded intervals, ball occlusion and aerial displacement, goalkeeper possession, a dead-ball
-restart, adversarial close observations, ball/player-track dropout, boundary-start/end transitions,
-contradictory proximity, and a half-boundary reset. The restart scenario supports throw-ins, corners,
-free kicks, goal kicks, kick-offs and other stoppages; throw-ins deliberately carry `Team=N/A`.
-Parameters include duration, frame rate, pitch dimensions, player count, track availability, ball
-visibility and coordinate noise. Players move coherently toward changing targets, with observation
-dropout/noise and configured scenario interruptions. These simulations are test fixtures, not
-realistic match replicas.
+deterministically generates tracking positions from explicit seeds. The canonical registry is
+listed below. These are controlled tracking fixtures, not validated representations of real match
+frequency or football dynamics.
+
+| Canonical scenario | Generated condition |
+|---|---|
+| `stable_home` | All frames are graded home possession with ordinary tracking noise. |
+| `stable_away` | All frames are graded away possession with ordinary tracking noise. |
+| `passes_turnovers` | H-A-H-A possession spells with a moving-ball window before each change. |
+| `home_to_away_turnover` | One H-to-A possession change at sequence midpoint. |
+| `away_to_home_turnover` | One A-to-H possession change at sequence midpoint. |
+| `contested_ball` | Two short X intervals with both teams close to the ball. |
+| `occlusion_aerial` | An H-to-A change plus a fixed ball-occlusion interval and noisy aerial track. |
+| `home_goal_area_possession` | Home possession near its goal; home track slot 0 is a proximity proxy, not a labeled role. |
+| `dead_ball_restart` | One D interval followed by an away restart. |
+| `short_dead_ball` | One short D interval followed by an away restart. |
+| `long_dead_ball` | One longer D interval followed by an away restart. |
+| `consecutive_dead_balls` | Two D intervals separated by an away live-possession restart. |
+| `adversarial_tracks` | Periodic away-track proximity conflicts during home possession. |
+| `half_reset` | An X boundary interval and decoder reset before away possession. |
+| `long_no_evidence` | An X interval with ball and all player observations unavailable. |
+| `ball_dropout` | A missing-ball interval while player observations and H labels continue. |
+| `missing_player_tracks` | Away player tracks are absent in one interval; ball and home tracks remain. |
+| `boundary_start` | One H-to-A possession change near sequence start. |
+| `boundary_end` | One H-to-A possession change near sequence end. |
+| `contradictory_evidence` | Persistent away proximity conflicts with H ground-truth labels. |
+| `rapid_ball_movement` | A short high-speed ball movement during uninterrupted H possession. |
+| `brief_nearest_player_blip` | A brief away-nearest-player observation during H possession. |
+
+The following accepted names are true aliases; generation is identical to the stated canonical
+target under identical seed and configuration:
+
+| Alias | Canonical target |
+|---|---|
+| `stable_home_possession` | `stable_home` |
+| `stable_away_possession` | `stable_away` |
+| `turnovers` | `passes_turnovers` |
+| `ball_tracking_dropout` | `ball_dropout` |
+| `dead_ball` | `dead_ball_restart` |
+| `ball_occlusion` | `occlusion_aerial` |
+| `long_ball_occlusion` | `occlusion_aerial` |
+| `crowded_ball_area` | `contested_ball` |
+| `ambiguous_proximity` | `contested_ball` |
+| `nearest_player_blip` | `brief_nearest_player_blip` |
+| `repeated_possessions` | `passes_turnovers` |
+| `no_evidence` | `long_no_evidence` |
+
+Directional turnover, dead-ball duration/count, long no-evidence, rapid-ball-movement, and nearest
+player-blip names are distinct canonical scenarios, not aliases. Names that previously redirected
+to an unrelated family have been corrected to generate their promised condition. `interception` is
+deprecated because this generator does not encode an event subtype; use `home_to_away_turnover` for
+the supported H-to-A label transition. `goalkeeper` is deprecated because no player-role identity
+is represented; use `home_goal_area_possession` for the available proximity proxy. Both deprecated
+names fail explicitly rather than silently changing condition. Parameters include duration, frame
+rate, pitch dimensions, player count, track availability, ball visibility and coordinate noise. The
+restart scenario supports throw-ins, corners, free kicks, goal kicks, kick-offs and other stoppages;
+throw-ins deliberately carry `Team=N/A`. For other restart types, set-piece team context matches the
+team holding the restart in ground truth.
 
 Run the complete fixed matrix:
 
@@ -37,7 +85,7 @@ possession run-synthetic-experiments --output-dir outputs/synthetic-experiments
 ```
 
 Optional `--seeds`, `--scenarios`, and `--duration-seconds` arguments narrow or extend the run.
-The default matrix uses seeds 11, 29 and 47; 15 canonical scenario families; and nine
+The default matrix uses seeds 11, 29 and 47; 22 canonical scenario families; and nine
 configurations:
 
 1. baseline model + baseline decoder,
@@ -50,29 +98,29 @@ configurations:
 8. revised evidence with synthetic Smart Tagging context disabled, and
 9. revised evidence with the same context enabled.
 
-Each row records its seed, scenario, full configuration, model/decoder version, sample count,
-runtime, warnings, frame and spell metrics, transition diagnostics, and abstention/missing-ball
-behavior. CSV and JSON are machine-readable; the Markdown report summarizes mean and standard
-deviation across scenario/seed runs, not frames. The 20 additional accepted scenario names are
-explicit aliases for canonical generators. Aliases normalize to their canonical family before
-generation and aggregation, so requesting both a canonical name and an alias does not duplicate or
-overweight a family. Outputs are local and ignored by Git.
+Each row records its seed, canonical scenario, full configuration, model/decoder version, sample
+count, runtime, warnings, frame and spell metrics, transition diagnostics, and abstention/missing-
+ball behavior. CSV and JSON are machine-readable; the Markdown report states requested names,
+effective canonical families, aliases, seeds, duration, and all configurations. Means and standard
+deviations are pooled across scenario/seed runs, not frames. Alias inputs normalize only to their
+declared true-equivalent canonical family; distinct requested conditions are never substituted.
+Outputs are local and ignored by Git.
 
 ## Synthetic results (not competition performance)
 
-Results from the canonical 45-sequence run per configuration (15 families × 3 seeds):
+Results from the canonical run per configuration (22 families × 3 seeds):
 
 | Configuration | macro-F1 mean ± SD | spellF1 mean ± SD | switches/min |
 |---|---:|---:|---:|
-| Baseline model + baseline decoder | 0.352 ± 0.140 | 0.662 ± 0.337 | 2.27 |
-| Revised model + baseline decoder | 0.332 ± 0.127 | 0.653 ± 0.341 | 1.68 |
-| Baseline model + revised decoder | 0.354 ± 0.141 | 0.665 ± 0.335 | 2.27 |
-| Revised model + revised decoder | 0.333 ± 0.130 | 0.637 ± 0.345 | 1.85 |
-| Revised without proximity | 0.006 ± 0.026 | 0.000 ± 0.000 | 0.00 |
-| Revised without local support | 0.340 ± 0.129 | 0.650 ± 0.347 | 1.85 |
-| Revised without approach | 0.340 ± 0.131 | 0.668 ± 0.335 | 1.68 |
-| Revised, Smart Tagging off | 0.333 ± 0.130 | 0.637 ± 0.345 | 1.85 |
-| Revised, Smart Tagging on | 0.333 ± 0.130 | 0.637 ± 0.345 | 1.85 |
+| Baseline model + baseline decoder | 0.358 ± 0.149 | 0.640 ± 0.320 | 2.40 |
+| Revised model + baseline decoder | 0.328 ± 0.154 | 0.614 ± 0.352 | 1.83 |
+| Baseline model + revised decoder | 0.362 ± 0.150 | 0.645 ± 0.318 | 2.50 |
+| Revised model + revised decoder | 0.335 ± 0.155 | 0.630 ± 0.350 | 1.89 |
+| Revised without proximity | 0.010 ± 0.034 | 0.000 ± 0.000 | 0.00 |
+| Revised without local support | 0.355 ± 0.143 | 0.641 ± 0.329 | 2.29 |
+| Revised without approach | 0.339 ± 0.151 | 0.644 ± 0.345 | 1.77 |
+| Revised, Smart Tagging off | 0.335 ± 0.155 | 0.630 ± 0.350 | 1.89 |
+| Revised, Smart Tagging on | 0.335 ± 0.155 | 0.630 ± 0.350 | 1.89 |
 
 This does not demonstrate a robust improvement: the revised evidence model regressed on the
 aggregate synthetic spell score, and the revised decoder's switch-contest handling did not improve

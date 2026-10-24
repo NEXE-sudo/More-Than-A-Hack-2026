@@ -1,6 +1,8 @@
 import csv
 import json
 
+import pytest
+
 from possession.experiments import run_experiments
 
 
@@ -40,3 +42,37 @@ def test_experiment_runner_counts_aliases_once(tmp_path):
     assert {row["scenario"] for row in result["rows"]} == {"passes_turnovers"}
     assert "- Effective scenario families (1): passes_turnovers" in report
     assert "- Runs per configuration: 1" in report
+
+
+def test_experiment_report_keeps_distinct_requested_conditions(tmp_path):
+    requested = (
+        "home_to_away_turnover",
+        "away_to_home_turnover",
+        "long_dead_ball",
+        "consecutive_dead_balls",
+    )
+    paths = run_experiments(
+        tmp_path,
+        seeds=(7,),
+        scenarios=requested,
+        duration_seconds=2.0,
+    )
+    result = json.loads(paths["json"].read_text(encoding="utf-8"))
+    report = paths["report"].read_text(encoding="utf-8")
+
+    assert result["requested_scenarios"] == list(requested)
+    assert result["scenarios"] == list(requested)
+    assert {row["scenario"] for row in result["rows"]} == set(requested)
+    assert len(result["rows"]) == len(requested) * 9
+    for scenario in requested:
+        assert scenario in report
+
+
+def test_experiment_runner_rejects_deprecated_scenario_with_replacement(tmp_path):
+    with pytest.raises(ValueError, match="scenario 'interception' is deprecated"):
+        run_experiments(
+            tmp_path,
+            seeds=(7,),
+            scenarios=("interception",),
+            duration_seconds=2.0,
+        )

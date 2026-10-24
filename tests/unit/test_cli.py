@@ -87,3 +87,25 @@ def test_cli_build_cache_predict_and_validate_submission_smoke(tmp_path):
         "1,H",
         "2,H",
     ]
+
+
+def test_cli_reports_deprecated_synthetic_scenario_and_replacement(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "possession.cli",
+            "run-synthetic-experiments",
+            "--output-dir",
+            str(tmp_path),
+            "--scenarios",
+            "interception",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "scenario 'interception' is deprecated" in result.stderr
+    assert "home_to_away_turnover" in result.stderr
