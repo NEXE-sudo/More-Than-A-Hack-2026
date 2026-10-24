@@ -1,47 +1,63 @@
 # Architecture
 
-## Implementation plan
+## Inference path
 
-1. Confirm the official output rules, source frame conventions, baseline, scorer, and Git boundary.
-2. Implement an independent Python package with strict loaders, explicit missingness, and synthetic
-   tests.
-3. Add vectorized tracking features and a deterministic, configurable temporal decoder.
-4. Keep baseline reproduction and scoring as subprocess calls into the official repository.
-5. Verify with data-independent tests and the public baseline evaluation; report gated-data
-   blockers instead of implying full-match experiments ran.
+`data.loaders` reads the ATD metadata XML and frame records into aligned arrays. Validation checks
+contiguous frame IDs, team assignments, pairwise coordinate missingness, finite values, and
+normalized coordinate limits. `features.tracking` computes pitch-metre distances, local counts,
+team speeds, ball motion, and missingness indicators using vectorized NumPy operations.
 
-## Data flow
+`models.baseline.evidence_from_features` is the default, unchanged nearest-distance evidence model.
+`models.baseline.revised_evidence_from_features` is opt-in and combines:
 
-`data.loaders` reads the ATD XML team/track metadata and line-oriented raw tracking into arrays;
-`data.validation` checks coordinate ranges and array shapes while preserving NaN observations.
-`features.tracking` computes normalized-pitch distances in metres, per-team nearby counts, ball
-motion and player-track reliability. `features.ball` provides causal trajectory features;
-`features.context` converts Smart Tagging intervals into context masks, not ground truth. The
-optional `features.geometry` projection validates and uses homographies only on declared-valid
-frames.
+- 75% nearest-player proximity evidence (`exp(-distance / scale)`),
+- up to 15% local supporting-player count evidence, and
+- up to 10% causal nearest-distance approach evidence.
 
-`models.baseline.evidence_from_features` creates independent H/A evidence from nearest distances.
-`temporal.decoder.decode` adds switch persistence, dead-ball evidence from a conservative sustained
-occlusion/low-team-speed heuristic, bounded short-gap holds, sequence resets, and abstention after
-longer evidence gaps. `pipeline.predict` validates and writes a plain `frame,label` CSV. The
-dead-ball heuristic is an unvalidated prior, not ground truth.
+Those bounded values are evidence scores, not calibrated probabilities. The model deliberately
+does not add the correlated nearest-team distance margin as another vote. Missing ball observations
+produce no team-distance evidence. Dead-ball evidence remains a separately defined score requiring
+a sustained ball gap, quiet teams, and enough observed tracks; it is a heuristic, not a trained
+dead-ball classifier.
 
-The official adapter launches the original baseline and scorer with explicit working directories.
-It neither imports evaluator internals nor copies or edits their source. The scorer requires pandas,
-which is pinned as a project dependency so the subprocess works with the isolated interpreter.
+`temporal.decoder.decode` remains the default hysteresis implementation. The opt-in
+`decode_revised` preserves a pending switch candidate through a configured, bounded number of
+low-evidence contest frames. Both decoders assign a newly observed possession immediately, confirm
+normal switches persistently, explicitly handle D and missing-evidence holds, and reset on sequence
+boundaries. The revised behavior does not backdate a confirmed switch.
 
-## Decoder semantics
+## Smart Tagging
 
-Evidence columns are H, A, D scores in `[0,1]`, not calibrated probabilities. Ties between teams
-prefer H. A switch requires the configured evidence margin over consecutive frames. Missing team
-evidence temporarily holds an existing team, then emits X; it does not imply D. D requires an
-explicitly supplied dead-ball score above a separate threshold and margin. A new sequence resets
-all state. These conservative defaults are configurable and not tuned against the 17-possession
-public slice.
+The loader maps `<start>` and `<end>` seconds to half-open tactical-frame intervals at the
+configured frame rate. The official schema describes automatic phase/restart annotations, not
+possession ground truth; `Team` identifies the team performing the event and may be `N/A`. The
+default model ignores these masks. For the revised model only, a valid unambiguous team tag may add
+a small bounded evidence bonus (`tagging_team_weight`, default 0.05); overlapping conflicting team
+tags are ignored. The code never maps `SET PIECES` directly to D or copies a tag into an output
+label. This is a testable prior, not verified against gated match data.
 
-## Explicitly deferred
+## Causal and sequence semantics
 
-There is no trained classifier, video model, identity tracking, or synchronized broadcast fusion.
-The dead-ball prior has not been evaluated against this match. Smart Tagging is context only and
-is not copied into possession labels. These are deliberate restrictions until permitted full-match
-assets and sound evaluation are available.
+Ball and team distance changes use only current and earlier frame observations. No look-ahead
+smoothing is used. A sequence boundary clears the current team, pending switch, and missing-run
+state. Inference emits `H`, `A`, `D`, or `X`; `X` is a model abstention in the submission contract.
+The official scorer's spell metric treats predicted `X` differently from frame-level scoring:
+within each non-X ground-truth run it fills a prediction's X with its previous non-X label and
+back-fills at the beginning of the run. A wholly-X run remains X. The synthetic evaluator follows
+that source-verified rule.
+
+## Cache and output path
+
+Feature caches are compressed NPZ files with `allow_pickle=False`, explicit schema version, array
+shape/dtype metadata, source-file SHA-256 hashes, and feature-extraction settings. Cache reuse
+requires the original source paths and matching feature settings; model/decoder settings do not
+invalidate features because they do not affect extraction. Output writing validates exact frame
+order, count, label alphabet, and `frame,label` CSV formatting.
+
+## Gated-data limitation
+
+The tactical match tracking bundle is not present in this workspace. The official scorer and
+public baseline outputs are accessible through the sibling official checkout, but this project's
+candidate pipeline cannot be validated against full-match tracking or private labels yet. The
+synthetic generator and experiment matrix are for reproducible engineering tests only, not a
+substitute for real-match evidence.

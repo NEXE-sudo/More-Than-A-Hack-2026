@@ -61,3 +61,25 @@ def test_smart_tagging_seconds_convert_to_half_open_frames(tmp_path):
     event = load_smart_tagging(path)[0]
     assert (event["start_frame"], event["end_frame"]) == (25, 50)
     assert event["tags"] == {"Team": "Barcelona"}
+
+
+def test_loaders_report_malformed_xml_with_the_input_path(tmp_path):
+    metadata, raw = write_tracking_files(tmp_path)
+    metadata.write_text("<Root>", encoding="utf-8")
+    with pytest.raises(ValueError, match="malformed tracking metadata XML"):
+        load_tracking(metadata, raw, expected_frames=2)
+
+    tagging = tmp_path / "broken-tags.xml"
+    tagging.write_text("<root>", encoding="utf-8")
+    with pytest.raises(ValueError, match="malformed Smart Tagging XML"):
+        load_smart_tagging(tagging)
+
+
+def test_smart_tagging_rejects_non_finite_interval_boundaries(tmp_path):
+    tagging = tmp_path / "invalid-tags.xml"
+    tagging.write_text(
+        "<root><instance><start>nan</start><end>2.0</end></instance></root>",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must be finite"):
+        load_smart_tagging(tagging)

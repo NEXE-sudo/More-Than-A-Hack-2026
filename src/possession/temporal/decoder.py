@@ -14,11 +14,31 @@ def decode(
     config: DecoderConfig = DecoderConfig(),
     sequence_starts: Sequence[bool] | None = None,
 ) -> np.ndarray:
-    """Decode [home, away, dead] scores with explicit gaps and switch persistence.
+    """Decode with the original hysteresis behavior."""
+    return _decode(scores, config, sequence_starts, contested_tolerance_frames=0)
+
+
+def decode_revised(
+    scores: np.ndarray,
+    config: DecoderConfig = DecoderConfig(),
+    sequence_starts: Sequence[bool] | None = None,
+) -> np.ndarray:
+    """Decode with bounded persistence of a switch candidate through brief contests."""
+    return _decode(scores, config, sequence_starts, config.contested_tolerance_frames)
+
+
+def _decode(
+    scores: np.ndarray,
+    config: DecoderConfig,
+    sequence_starts: Sequence[bool] | None,
+    contested_tolerance_frames: int,
+) -> np.ndarray:
+    """Decode [home, away, dead] evidence with explicit gaps and switch persistence.
 
     Scores are evidence in [0, 1], not probabilities. A short gap holds the previous state;
     longer gaps produce X instead of retaining possession indefinitely. Sequence starts reset
-    all state. Ties between teams are resolved in favor of home for reproducibility.
+    all state. Ties between teams are resolved in favor of home for reproducibility. The revised
+    strategy preserves a pending challenger for a bounded number of low-evidence frames.
     """
     evidence = np.asarray(scores, dtype=np.float64)
     if evidence.ndim != 2 or evidence.shape[1] != 3:
@@ -39,6 +59,7 @@ def decode(
     missing_run = 0
     pending: str | None = None
     pending_run = 0
+    pending_gap = 0
 
     for frame in range(n_frames):
         if starts[frame]:
@@ -46,6 +67,7 @@ def decode(
             missing_run = 0
             pending = None
             pending_run = 0
+            pending_gap = 0
         home, away, dead = evidence[frame]
         best_team = "H" if home >= away else "A"
         team_score = max(home, away)
@@ -55,6 +77,7 @@ def decode(
             missing_run = 0
             pending = None
             pending_run = 0
+            pending_gap = 0
             output[frame] = "D"
             continue
 
@@ -70,8 +93,12 @@ def decode(
             continue
         if team_score < config.continue_threshold:
             missing_run += 1
-            pending = None
-            pending_run = 0
+            if pending is not None and pending_gap < contested_tolerance_frames:
+                pending_gap += 1
+            else:
+                pending = None
+                pending_run = 0
+                pending_gap = 0
             if missing_run <= config.missing_hold_frames:
                 output[frame] = current
             else:
@@ -83,6 +110,7 @@ def decode(
         if best_team == current:
             pending = None
             pending_run = 0
+            pending_gap = 0
             output[frame] = current
             continue
 
@@ -96,12 +124,23 @@ def decode(
             else:
                 pending = best_team
                 pending_run = 1
+            pending_gap = 0
             if pending_run >= config.switch_frames:
                 current = best_team
                 pending = None
                 pending_run = 0
+                pending_gap = 0
         else:
-            pending = None
-            pending_run = 0
+            if pending is not None and team_score < config.continue_threshold:
+                if pending_gap < contested_tolerance_frames:
+                    pending_gap += 1
+                else:
+                    pending = None
+                    pending_run = 0
+                    pending_gap = 0
+            else:
+                pending = None
+                pending_run = 0
+                pending_gap = 0
         output[frame] = current
     return output

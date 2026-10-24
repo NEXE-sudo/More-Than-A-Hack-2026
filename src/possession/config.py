@@ -2,6 +2,7 @@
 
 import tomllib
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 
 
@@ -16,6 +17,8 @@ class DataConfig:
 @dataclass(frozen=True)
 class ModelConfig:
     distance_scale_m: float = 5.0
+    evidence_model: str = "baseline"
+    tagging_team_weight: float = 0.05
     dead_ball_min_gap_frames: int = 25
     dead_ball_max_team_speed_m_s: float = 0.5
     dead_ball_min_tracks_per_team: int = 4
@@ -24,6 +27,7 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class DecoderConfig:
+    strategy: str = "baseline"
     switch_threshold: float = 0.55
     switch_margin: float = 0.15
     switch_frames: int = 3
@@ -32,6 +36,7 @@ class DecoderConfig:
     dead_threshold: float = 0.75
     dead_margin: float = 0.15
     missing_hold_frames: int = 15
+    contested_tolerance_frames: int = 1
 
 
 @dataclass(frozen=True)
@@ -53,20 +58,36 @@ def load_config(path: Path | str) -> Config:
         raise ValueError(f"{path}: unknown or invalid configuration field: {exc}") from exc
     if data.frames <= 0 or data.fps <= 0:
         raise ValueError("data.frames and data.fps must be positive")
-    if data.pitch_length_m <= 0 or data.pitch_width_m <= 0:
+    if (
+        not isfinite(data.pitch_length_m)
+        or not isfinite(data.pitch_width_m)
+        or data.pitch_length_m <= 0
+        or data.pitch_width_m <= 0
+    ):
         raise ValueError("pitch dimensions must be positive")
-    if model.distance_scale_m <= 0:
+    if not isfinite(model.distance_scale_m) or model.distance_scale_m <= 0:
         raise ValueError("model.distance_scale_m must be positive")
+    if model.evidence_model not in {"baseline", "revised"}:
+        raise ValueError("model.evidence_model must be 'baseline' or 'revised'")
+    if not 0 <= model.tagging_team_weight <= 0.2:
+        raise ValueError("model.tagging_team_weight must be between 0 and 0.2")
     if (
         model.dead_ball_min_gap_frames < 1
         or model.dead_ball_min_tracks_per_team < 1
+        or not isfinite(model.dead_ball_max_team_speed_m_s)
         or model.dead_ball_max_team_speed_m_s < 0
     ):
         raise ValueError("model dead-ball thresholds are invalid")
     if not 0 <= model.dead_ball_evidence_score <= 1:
         raise ValueError("model.dead_ball_evidence_score must be between 0 and 1")
-    if decoder.switch_frames < 1 or decoder.missing_hold_frames < 0:
+    if (
+        decoder.switch_frames < 1
+        or decoder.missing_hold_frames < 0
+        or decoder.contested_tolerance_frames < 0
+    ):
         raise ValueError("decoder frame limits are invalid")
+    if decoder.strategy not in {"baseline", "revised"}:
+        raise ValueError("decoder.strategy must be 'baseline' or 'revised'")
     for name in (
         "switch_threshold",
         "start_threshold",
@@ -75,7 +96,12 @@ def load_config(path: Path | str) -> Config:
     ):
         if not 0 <= getattr(decoder, name) <= 1:
             raise ValueError(f"decoder.{name} must be between 0 and 1")
-    if decoder.switch_margin < 0 or decoder.dead_margin < 0:
+    if (
+        not isfinite(decoder.switch_margin)
+        or not isfinite(decoder.dead_margin)
+        or decoder.switch_margin < 0
+        or decoder.dead_margin < 0
+    ):
         raise ValueError("decoder margins cannot be negative")
     if decoder.continue_threshold > decoder.start_threshold:
         raise ValueError("decoder.continue_threshold cannot exceed start_threshold")

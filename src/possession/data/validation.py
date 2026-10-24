@@ -27,8 +27,10 @@ def validate_tracking(data: TrackingData, expected_frames: int | None = None) ->
     n_frames = len(data.frame_ids)
     if expected_frames is not None and n_frames != expected_frames:
         raise ValueError(f"expected {expected_frames} tracking frames, found {n_frames}")
-    if data.frame_ids.ndim != 1 or not np.array_equal(
-        data.frame_ids, np.arange(n_frames, dtype=np.int64)
+    if (
+        data.frame_ids.ndim != 1
+        or not np.issubdtype(data.frame_ids.dtype, np.integer)
+        or not np.array_equal(data.frame_ids, np.arange(n_frames, dtype=np.int64))
     ):
         raise ValueError("video frame indices must be ordered and contiguous from zero")
     if data.players.ndim != 3 or data.players.shape[0] != n_frames or data.players.shape[2] != 2:
@@ -43,6 +45,10 @@ def validate_tracking(data: TrackingData, expected_frames: int | None = None) ->
     for name, values in (("players", data.players), ("ball", data.ball)):
         if np.isinf(values).any():
             raise ValueError(f"{name} coordinates contain infinite values")
+        observed_coordinates = np.isfinite(values)
+        partial_observation = observed_coordinates[..., 0] != observed_coordinates[..., 1]
+        if partial_observation.any():
+            raise ValueError(f"{name} observations must provide both coordinates or neither")
         finite = np.isfinite(values)
         if finite.any() and ((values[finite] < 0) | (values[finite] > 1)).any():
             raise ValueError(f"{name} coordinates must be normalized to [0, 1] or NaN")

@@ -40,3 +40,10 @@ def test_non_finite_infinity_is_not_treated_as_missing():
     data.ball[0, 0] = np.inf
     with pytest.raises(ValueError, match="infinite"):
         validate_tracking(data)
+
+
+def test_partial_coordinate_pairs_are_rejected_instead_of_being_treated_as_missing():
+    data = fixture_data()
+    data.players[1, 0, 0] = np.nan
+    with pytest.raises(ValueError, match="both coordinates or neither"):
+        validate_tracking(data)

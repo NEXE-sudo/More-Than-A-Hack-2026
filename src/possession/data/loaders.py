@@ -39,10 +39,13 @@ def load_tracking(
         raise FileNotFoundError(f"tracking metadata not found: {meta}")
     if not raw.is_file():
         raise FileNotFoundError(f"tracking data not found: {raw}")
-    root = ET.parse(meta).getroot()
+    try:
+        root = ET.parse(meta).getroot()
+    except ET.ParseError as exc:
+        raise ValueError(f"{meta}: malformed tracking metadata XML: {exc}") from exc
     team_ids = [node.get("id") for node in root.iter("Team")]
     players = list(root.iter("Player"))
-    if len(team_ids) != 2 or not players:
+    if len(team_ids) != 2 or not players or len(set(team_ids)) != 2 or None in team_ids:
         raise ValueError(f"{meta}: expected two teams and at least one Player entry")
     team_lookup = {team_ids[0]: 0, team_ids[1]: 1}
     try:
@@ -152,12 +155,18 @@ def load_smart_tagging(path: Path | str, fps: int = 25) -> list[dict[str, object
         raise ValueError("fps must be positive")
     source = Path(path).expanduser().resolve()
     events: list[dict[str, object]] = []
-    for instance in ET.parse(source).iter("instance"):
+    try:
+        instances = ET.parse(source).iter("instance")
+    except ET.ParseError as exc:
+        raise ValueError(f"{source}: malformed Smart Tagging XML: {exc}") from exc
+    for instance in instances:
         try:
             start = float(instance.findtext("start", ""))
             end = float(instance.findtext("end", ""))
         except ValueError as exc:
             raise ValueError(f"{source}: instance has invalid start/end seconds") from exc
+        if not np.isfinite([start, end]).all():
+            raise ValueError(f"{source}: instance start/end seconds must be finite")
         if end < start:
             raise ValueError(f"{source}: instance ends before it starts")
         tags = {

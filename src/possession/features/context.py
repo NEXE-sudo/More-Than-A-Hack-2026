@@ -5,6 +5,8 @@ import numpy as np
 
 def tagging_context(events: list[dict[str, object]], n_frames: int) -> dict[str, np.ndarray]:
     """Return phase, set-piece, and tagged-team masks indexed by tactical frame."""
+    if n_frames < 0:
+        raise ValueError("n_frames cannot be negative")
     phase = np.zeros(n_frames, dtype=bool)
     set_piece = np.zeros(n_frames, dtype=bool)
     tagged_home = np.zeros(n_frames, dtype=bool)
@@ -30,4 +32,5 @@ def tagging_context(events: list[dict[str, object]], n_frames: int) -> dict[str,
         "tagged_set_piece": set_piece,
         "tagged_home": tagged_home,
         "tagged_away": tagged_away,
+        "tagged_team_conflict": tagged_home & tagged_away,
     }

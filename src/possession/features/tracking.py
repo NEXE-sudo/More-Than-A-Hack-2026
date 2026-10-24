@@ -16,11 +16,12 @@ def extract_tracking_features(
     """Extract distances, local counts, ball motion, and observation reliability."""
     if pitch_length_m <= 0 or pitch_width_m <= 0 or nearby_radius_m <= 0 or fps <= 0:
         raise ValueError("pitch dimensions, nearby radius, and fps must be positive")
-    players = data.players.astype(np.float64, copy=False)
-    ball = data.ball.astype(np.float64, copy=False)
+    players = data.players.astype(np.float32, copy=False)
+    ball = data.ball.astype(np.float32, copy=False)
     visible = np.isfinite(ball).all(axis=1)
-    ball_m = ball * np.asarray([pitch_length_m, pitch_width_m])
-    player_m = players * np.asarray([pitch_length_m, pitch_width_m])
+    pitch_scale = np.asarray([pitch_length_m, pitch_width_m], dtype=np.float32)
+    ball_m = ball * pitch_scale
+    player_m = players * pitch_scale
     displacement = player_m - ball_m[:, None, :]
     distances = np.linalg.norm(displacement, axis=2)
     distances[~np.isfinite(displacement).all(axis=2)] = np.nan

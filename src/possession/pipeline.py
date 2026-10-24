@@ -11,8 +11,12 @@ from possession.data.validation import validate_predictions
 from possession.features.cache import load_feature_cache
 from possession.features.context import tagging_context
 from possession.features.tracking import extract_tracking_features
-from possession.models.baseline import dead_ball_evidence, evidence_from_features
-from possession.temporal.decoder import decode
+from possession.models.baseline import (
+    dead_ball_evidence,
+    evidence_from_features,
+    revised_evidence_from_features,
+)
+from possession.temporal.decoder import decode, decode_revised
 
 
 def predict(
@@ -29,7 +33,21 @@ def predict(
     if frame_count <= 0:
         raise ValueError("expected frame count must be positive")
     if feature_cache_path is not None:
-        features = load_feature_cache(feature_cache_path, frame_count)
+        if metadata_path is None or tracking_path is None:
+            raise ValueError(
+                "metadata and tracking paths are required to verify feature-cache sources"
+            )
+        features = load_feature_cache(
+            feature_cache_path,
+            frame_count,
+            source_paths=(metadata_path, tracking_path),
+            context_source_paths=(() if smart_tagging_path is None else (smart_tagging_path,)),
+            feature_config={
+                "fps": config.data.fps,
+                "pitch_length_m": config.data.pitch_length_m,
+                "pitch_width_m": config.data.pitch_width_m,
+            },
+        )
     else:
         if metadata_path is None or tracking_path is None:
             raise ValueError("metadata and tracking paths are required without a feature cache")
@@ -50,10 +68,21 @@ def predict(
         minimum_tracks_per_team=config.model.dead_ball_min_tracks_per_team,
         score=config.model.dead_ball_evidence_score,
     )
-    evidence = evidence_from_features(
-        features, config.model.distance_scale_m, dead_ball_score=dead_score
-    )
-    labels = decode(evidence, config.decoder)
+    if config.model.evidence_model == "revised":
+        evidence = revised_evidence_from_features(
+            features,
+            config.model.distance_scale_m,
+            dead_ball_score=dead_score,
+            tagging_team_weight=(
+                config.model.tagging_team_weight if "tagged_home" in features else 0.0
+            ),
+        )
+    else:
+        evidence = evidence_from_features(
+            features, config.model.distance_scale_m, dead_ball_score=dead_score
+        )
+    decoder = decode_revised if config.decoder.strategy == "revised" else decode
+    labels = decoder(evidence, config.decoder)
     frames = np.arange(frame_count, dtype=np.int64)
     validate_predictions(frames, labels, frame_count)
     destination = Path(output_path).expanduser().resolve()

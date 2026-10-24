@@ -1,5 +1,6 @@
 import numpy as np
 
+from possession.config import Config, DecoderConfig, ModelConfig
 from possession.data.validation import validate_submission_file
 from possession.features.cache import save_feature_cache
 from possession.pipeline import predict
@@ -33,8 +34,25 @@ def test_pipeline_writes_deterministic_submission_from_synthetic_tracking(tmp_pa
         "2,H",
     ]
 
+    revised_config = Config(
+        model=ModelConfig(evidence_model="revised"),
+        decoder=DecoderConfig(strategy="revised"),
+    )
+    revised = predict(
+        metadata,
+        tracking,
+        tmp_path / "revised.csv",
+        revised_config,
+        expected_frames=3,
+    )
+    assert revised.tolist() == ["H", "H", "H"]
+
 
 def test_pipeline_can_predict_from_a_validated_feature_cache(tmp_path):
+    metadata = tmp_path / "meta.xml"
+    tracking = tmp_path / "tracking.txt"
+    metadata.write_text("<metadata />", encoding="utf-8")
+    tracking.write_text("source", encoding="utf-8")
     cache = save_feature_cache(
         tmp_path / "features.npz",
         {
@@ -47,10 +65,12 @@ def test_pipeline_can_predict_from_a_validated_feature_cache(tmp_path):
             "home_player_track_count": np.full(3, 5),
             "away_player_track_count": np.full(3, 5),
         },
+        source_paths=(metadata, tracking),
+        feature_config={"fps": 25, "pitch_length_m": 105.3, "pitch_width_m": 68.0},
     )
     labels = predict(
-        None,
-        None,
+        metadata,
+        tracking,
         tmp_path / "cached.csv",
         expected_frames=3,
         feature_cache_path=cache,

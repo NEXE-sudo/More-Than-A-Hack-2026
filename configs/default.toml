@@ -6,12 +6,15 @@ pitch_width_m = 68.0
 
 [model]
 distance_scale_m = 5.0
+evidence_model = "baseline"
+tagging_team_weight = 0.05
 dead_ball_min_gap_frames = 25
 dead_ball_max_team_speed_m_s = 0.5
 dead_ball_min_tracks_per_team = 4
 dead_ball_evidence_score = 0.85
 
 [decoder]
+strategy = "baseline"
 switch_threshold = 0.55
 switch_margin = 0.15
 switch_frames = 3
@@ -20,3 +23,4 @@ continue_threshold = 0.35
 dead_threshold = 0.75
 dead_margin = 0.15
 missing_hold_frames = 15
+contested_tolerance_frames = 1

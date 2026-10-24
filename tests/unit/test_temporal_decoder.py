@@ -1,7 +1,7 @@
 import numpy as np
 
 from possession.config import DecoderConfig
-from possession.temporal.decoder import decode
+from possession.temporal.decoder import decode, decode_revised
 
 
 def scores(home: float, away: float, dead: float = 0.0) -> list[float]:
@@ -65,3 +65,44 @@ def test_sequence_boundaries_reset_previous_possession():
 def test_identical_inputs_are_deterministic():
     values = np.array([scores(0.5, 0.5), scores(0.2, 0.8)] * 5)
     assert np.array_equal(decode(values), decode(values))
+
+
+def test_revised_decoder_preserves_switch_confirmation_through_brief_contest():
+    values = np.array(
+        [
+            scores(0.85, 0.1),
+            scores(0.1, 0.85),
+            scores(0.2, 0.2),
+            scores(0.1, 0.85),
+        ]
+    )
+    config = DecoderConfig(switch_frames=2, missing_hold_frames=2, contested_tolerance_frames=1)
+    assert decode(values, config).tolist() == ["H", "H", "H", "H"]
+    assert decode_revised(values, config).tolist() == ["H", "H", "H", "A"]
+
+
+def test_revised_decoder_clears_candidate_after_contest_tolerance_and_resets_on_half():
+    values = np.array(
+        [
+            scores(0.85, 0.1),
+            scores(0.1, 0.85),
+            scores(0.2, 0.2),
+            scores(0.2, 0.2),
+            scores(0.1, 0.85),
+            scores(0.0, 0.0),
+        ]
+    )
+    config = DecoderConfig(
+        switch_frames=2,
+        missing_hold_frames=2,
+        contested_tolerance_frames=1,
+    )
+    assert decode_revised(values, config).tolist() == ["H", "H", "H", "H", "H", "H"]
+    assert decode_revised(values, config, [True, False, False, False, True, False]).tolist() == [
+        "H",
+        "H",
+        "H",
+        "H",
+        "A",
+        "A",
+    ]
