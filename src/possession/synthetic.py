@@ -19,6 +19,11 @@ CANONICAL_SCENARIOS = (
     "dead_ball_restart",
     "adversarial_tracks",
     "half_reset",
+    "ball_dropout",
+    "missing_player_tracks",
+    "boundary_start",
+    "boundary_end",
+    "contradictory_evidence",
 )
 SCENARIO_ALIASES = {
     "stable_home_possession": "stable_home",
@@ -26,7 +31,6 @@ SCENARIO_ALIASES = {
     "home_to_away_turnover": "passes_turnovers",
     "away_to_home_turnover": "passes_turnovers",
     "turnovers": "passes_turnovers",
-    "ball_dropout": "contested_ball",
     "ball_tracking_dropout": "contested_ball",
     "long_dead_ball": "dead_ball_restart",
     "short_dead_ball": "dead_ball_restart",
@@ -38,16 +42,12 @@ SCENARIO_ALIASES = {
     "ambiguous_proximity": "contested_ball",
     "brief_nearest_player_blip": "interception",
     "nearest_player_blip": "interception",
-    "boundary_start": "half_reset",
-    "boundary_end": "half_reset",
-    "missing_player_tracks": "adversarial_tracks",
     "consecutive_dead_balls": "dead_ball_restart",
     "repeated_possessions": "passes_turnovers",
     "long_no_evidence": "half_reset",
     "no_evidence": "half_reset",
-    "contradictory_evidence": "contested_ball",
 }
-SCENARIOS = tuple(dict.fromkeys((*CANONICAL_SCENARIOS, *SCENARIO_ALIASES)))
+SCENARIOS = (*CANONICAL_SCENARIOS, *SCENARIO_ALIASES)
 RESTART_TYPES = (
     "Throw-in",
     "Corner Kick",
@@ -100,6 +100,10 @@ def _possession_schedule(family: str, n_frames: int) -> tuple[np.ndarray, np.nda
         fill(0.48, 0.52, "X")
         fill(0.52, 1.0, "A")
         starts[min(n_frames - 1, round(0.52 * n_frames))] = True
+    elif family == "boundary_start":
+        labels[round(0.08 * n_frames) :] = "A"
+    elif family == "boundary_end":
+        labels[round(0.92 * n_frames) :] = "A"
     return labels, starts
 
 
@@ -274,6 +278,9 @@ def generate_synthetic_sequence(
             ):
                 locations[0] = np.clip(state / scales, 0.01, 0.99)
                 present[0] = True
+            if family_name == "contradictory_evidence" and label == "H" and team == 1:
+                locations[0] = np.clip(state / scales, 0.01, 0.99)
+                present[0] = True
 
             players[frame, team_slice][present] = locations[present]
             speeds[frame, team_slice][present] = team_speed[present]
@@ -285,6 +292,17 @@ def generate_synthetic_sequence(
                 0.99,
             )
             players[frame, 0] = np.clip(ball[frame] + rng.normal(0, 0.004, 2), 0.01, 0.99)
+
+    if family_name == "ball_dropout":
+        start = round(0.35 * n_frames)
+        stop = max(start + 1, round(0.55 * n_frames))
+        ball[start:stop] = np.nan
+    if family_name == "missing_player_tracks":
+        start = round(0.35 * n_frames)
+        stop = max(start + 1, round(0.55 * n_frames))
+        away_tracks = teams == 1
+        players[start:stop, away_tracks] = np.nan
+        speeds[start:stop, away_tracks] = np.nan
 
     tracking = TrackingData(
         frame_ids=np.arange(n_frames, dtype=np.int64),
@@ -320,4 +338,4 @@ def generate_synthetic_sequence(
             }
         )
     features.update(tagging_context(events, n_frames))
-    return SyntheticSequence(family, seed, features, labels, sequence_starts)
+    return SyntheticSequence(family_name, seed, features, labels, sequence_starts)

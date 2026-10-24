@@ -16,7 +16,12 @@ from possession.models.baseline import (
     evidence_from_features,
     revised_evidence_from_features,
 )
-from possession.synthetic import SCENARIOS, generate_synthetic_sequence
+from possession.synthetic import (
+    CANONICAL_SCENARIOS,
+    SCENARIO_ALIASES,
+    SCENARIOS,
+    generate_synthetic_sequence,
+)
 from possession.temporal.decoder import decode, decode_revised
 
 EXPERIMENTS = (
@@ -140,14 +145,24 @@ def run_experiments(
     output_dir: Path | str,
     *,
     seeds: tuple[int, ...] = (11, 29, 47),
-    scenarios: tuple[str, ...] = SCENARIOS,
+    scenarios: tuple[str, ...] = CANONICAL_SCENARIOS,
     duration_seconds: float = 16.0,
 ) -> dict[str, Path]:
     """Run the fixed experiment matrix and write detailed JSON/CSV/Markdown outputs."""
     if not seeds:
         raise ValueError("at least one deterministic seed is required")
+    if len(set(seeds)) != len(seeds):
+        raise ValueError("seeds must be unique to avoid duplicate runs")
     if not scenarios or any(scenario not in SCENARIOS for scenario in scenarios):
         raise ValueError("scenarios must be selected from the predefined synthetic families")
+    selected_scenarios = tuple(
+        dict.fromkeys(SCENARIO_ALIASES.get(scenario, scenario) for scenario in scenarios)
+    )
+    aliases_collapsed = {
+        scenario: SCENARIO_ALIASES[scenario]
+        for scenario in scenarios
+        if scenario in SCENARIO_ALIASES
+    }
     destination = Path(output_dir).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
 
@@ -163,7 +178,7 @@ def run_experiments(
         "coordinate_noise_m": 0.45,
         "restart_type": "Corner Kick",
     }
-    for scenario in scenarios:
+    for scenario in selected_scenarios:
         for seed in seeds:
             sequence = generate_synthetic_sequence(
                 scenario,
@@ -194,8 +209,12 @@ def run_experiments(
         "fragmentation",
         "missing_ball_accuracy",
         "dead_ball_f1",
+        "alive_dead_f1",
+        "team_accuracy",
         "ground_truth_segments",
         "predicted_segments",
+        "ground_truth_spells",
+        "predicted_spells",
         "graded_frames",
         "runtime_seconds",
     )
@@ -229,7 +248,9 @@ def run_experiments(
             {
                 "evaluation_kind": "synthetic_only_not_competition_performance",
                 "seeds": list(seeds),
-                "scenarios": list(scenarios),
+                "requested_scenarios": list(scenarios),
+                "scenarios": list(selected_scenarios),
+                "scenario_aliases_collapsed": aliases_collapsed,
                 "synthetic_config": synthetic_config,
                 "duration_seconds": duration_seconds,
                 "experiments": list(EXPERIMENTS),
@@ -252,14 +273,19 @@ def run_experiments(
         "competition results and do not establish real-match generalization.",
         "",
         f"- Seeds: {', '.join(map(str, seeds))}",
-        f"- Scenario families: {', '.join(scenarios)}",
+        f"- Effective scenario families ({len(selected_scenarios)}): "
+        f"{', '.join(selected_scenarios)}",
         f"- Sequence duration: {duration_seconds:g} seconds",
-        f"- Runs per configuration: {len(seeds) * len(scenarios)}",
+        f"- Runs per configuration: {len(seeds) * len(selected_scenarios)}",
+        "",
+        "Alias inputs are normalized to canonical generators and counted only once. These "
+        "descriptive means and standard deviations are pooled over scenario/seed cases; they are "
+        "not confidence intervals and do not establish independent scenario sampling.",
         "",
         "## Aggregate results",
         "",
-        "Mean and sample standard deviation across scenario/seed runs; scenarios are the "
-        "experimental units, not individual frames.",
+        "Mean ± sample SD across canonical scenario/seed runs. Frame rows are not independent "
+        "observations.",
         "",
         "| Configuration | macro-F1 mean ± SD | spellF1 mean ± SD | switches/min | "
         "boundary error (frames) |",
@@ -281,21 +307,72 @@ def run_experiments(
             f"{spell_mean:.3f} ± {spell_sd:.3f} | {switch_mean:.2f} | "
             f"{boundary_text} |"
         )
-    report_lines.extend(("", "## Scenario variability", ""))
+    report_lines.extend(("", "## Scenario-level results", ""))
     for name, group in grouped.items():
         report_lines.append(f"### {name}")
         report_lines.append("")
-        report_lines.append("| Scenario | macro-F1 mean ± SD | spellF1 mean ± SD |")
-        report_lines.append("|---|---:|---:|")
-        for scenario in scenarios:
+        report_lines.append(
+            "| Scenario | macro-F1 mean ± SD | spellF1 mean ± SD | "
+            "true/predicted spells (mean) | alive/dead F1 | team accuracy |"
+        )
+        report_lines.append("|---|---:|---:|---:|---:|---:|")
+        for scenario in selected_scenarios:
             subset = [row for row in group if row["scenario"] == scenario]
             macro_mean, macro_sd = _mean_sd(subset, "macro_f1")
             spell_mean, spell_sd = _mean_sd(subset, "spell_f1_mean")
+            true_spells, _ = _mean_sd(subset, "ground_truth_spells")
+            pred_spells, _ = _mean_sd(subset, "predicted_spells")
+            alive_dead, _ = _mean_sd(subset, "alive_dead_f1")
+            team_accuracy, _ = _mean_sd(subset, "team_accuracy")
             report_lines.append(
                 f"| {scenario} | {macro_mean:.3f} ± {macro_sd:.3f} | "
-                f"{spell_mean:.3f} ± {spell_sd:.3f} |"
+                f"{spell_mean:.3f} ± {spell_sd:.3f} | "
+                f"{true_spells:.1f}/{pred_spells:.1f} | {alive_dead:.3f} | "
+                f"{team_accuracy:.3f} |"
             )
         report_lines.append("")
+    report_lines.extend(("", "## Paired descriptive deltas", ""))
+    report_lines.append(
+        "Per-case differences from `baseline_model_baseline_decoder`, matched by canonical "
+        "scenario and seed. These are descriptive paired summaries only, not significance tests."
+    )
+    report_lines.extend(
+        (
+            "",
+            "| Configuration | Δ macro-F1 mean ± SD | Δ spellF1 mean ± SD |",
+            "|---|---:|---:|",
+        )
+    )
+    baseline_rows = {
+        (str(row["scenario"]), int(row["seed"])): row
+        for row in rows
+        if row["experiment"] == "baseline_model_baseline_decoder"
+    }
+    for experiment in EXPERIMENTS:
+        name = str(experiment["name"])
+        if name == "baseline_model_baseline_decoder":
+            continue
+        comparisons = [
+            row
+            for row in rows
+            if row["experiment"] == name
+            and (str(row["scenario"]), int(row["seed"])) in baseline_rows
+        ]
+        macro_deltas = [
+            float(row["macro_f1"])
+            - float(baseline_rows[(str(row["scenario"]), int(row["seed"]))]["macro_f1"])
+            for row in comparisons
+        ]
+        spell_deltas = [
+            float(row["spell_f1_mean"])
+            - float(baseline_rows[(str(row["scenario"]), int(row["seed"]))]["spell_f1_mean"])
+            for row in comparisons
+        ]
+        macro_mean, macro_sd = _values_mean_sd(macro_deltas)
+        spell_mean, spell_sd = _values_mean_sd(spell_deltas)
+        report_lines.append(
+            f"| {name} | {macro_mean:+.3f} ± {macro_sd:.3f} | {spell_mean:+.3f} ± {spell_sd:.3f} |"
+        )
     report_lines.extend(
         (
             "## Interpretation limits",
@@ -312,10 +389,12 @@ def run_experiments(
     return {"csv": csv_path, "json": json_path, "report": report_path}
 
 
-def _mean_sd(rows: list[dict[str, object]], metric: str) -> tuple[float, float]:
-    values = np.asarray(
-        [float(row[metric]) for row in rows if row[metric] is not None], dtype=np.float64
-    )
-    if not len(values):
+def _values_mean_sd(values: list[float]) -> tuple[float, float]:
+    array = np.asarray(values, dtype=np.float64)
+    if not len(array):
         return 0.0, 0.0
-    return float(np.mean(values)), float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
+    return float(np.mean(array)), float(np.std(array, ddof=1)) if len(array) > 1 else 0.0
+
+
+def _mean_sd(rows: list[dict[str, object]], metric: str) -> tuple[float, float]:
+    return _values_mean_sd([float(row[metric]) for row in rows if row[metric] is not None])

@@ -16,6 +16,17 @@ def test_exact_prediction_scores_perfect_frame_and_spell_metrics():
     assert result["boundary_timing_error_frames"] == 0
 
 
+def test_perfect_single_team_run_keeps_absent_classes_in_macro_f1():
+    labels = np.array(["H"] * 12)
+    result = evaluate_synthetic(labels, labels)
+
+    assert result["accuracy"] == 1.0
+    assert result["macro_f1"] == pytest.approx(1 / 3)
+    assert result["spell_f1_mean"] == 1.0
+    assert result["ground_truth_spells"] == 1
+    assert result["predicted_spells"] == 1
+
+
 def test_abstentions_are_frame_misses_but_filled_for_spell_evaluation():
     truth = np.array(["H"] * 10 + ["A"] * 10)
     prediction = np.array(["H"] * 5 + ["X"] * 5 + ["A"] * 10)

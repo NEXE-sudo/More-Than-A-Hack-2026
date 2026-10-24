@@ -136,14 +136,20 @@ def evaluate_synthetic(
     switch_tolerance_frames: int = 12,
 ) -> dict[str, float | int | None]:
     """Return official-style frame/spell metrics and interpretable switch diagnostics."""
-    truth = np.asarray(truth_labels, dtype="<U1")
-    prediction = np.asarray(predicted_labels, dtype="<U1")
-    if truth.ndim != 1 or prediction.shape != truth.shape:
+    truth_values = np.asarray(truth_labels)
+    prediction_values = np.asarray(predicted_labels)
+    if truth_values.ndim != 1 or prediction_values.shape != truth_values.shape:
         raise ValueError("truth and predictions must be same-length 1D label arrays")
+    truth_text = np.asarray([str(value).strip().upper() for value in truth_values], dtype=object)
+    prediction_text = np.asarray(
+        [str(value).strip().upper() for value in prediction_values], dtype=object
+    )
+    if set(truth_text.tolist()) - set(LABELS) or set(prediction_text.tolist()) - set(LABELS):
+        raise ValueError("labels must be one of H, A, D, X")
+    truth = truth_text.astype("<U1")
+    prediction = prediction_text.astype("<U1")
     if fps <= 0 or switch_tolerance_frames < 0:
         raise ValueError("fps must be positive and switch tolerance cannot be negative")
-    if set(truth.tolist()) - set(LABELS) or set(prediction.tolist()) - set(LABELS):
-        raise ValueError("labels must be one of H, A, D, X")
 
     runs = _runs(truth)
     graded = truth != "X"
@@ -181,6 +187,16 @@ def evaluate_synthetic(
     dead_fp = int(np.sum(graded & (truth != "D") & (prediction == "D")))
     dead_fn = int(np.sum(graded & (truth == "D") & (prediction != "D")))
     dead_denominator = 2 * dead_tp + dead_fp + dead_fn
+    alive_truth = graded & np.isin(truth, ("H", "A"))
+    alive_prediction = np.isin(prediction, ("H", "A"))
+    alive_tp = int(np.sum(alive_truth & alive_prediction))
+    alive_fp = int(np.sum(graded & (truth == "D") & alive_prediction))
+    alive_fn = int(np.sum(alive_truth & ~alive_prediction))
+    alive_denominator = 2 * alive_tp + alive_fp + alive_fn
+    true_alive_frames = int(alive_truth.sum())
+    correct_team_frames = int(np.sum(alive_truth & (truth == prediction)))
+    true_spells = sum(segment[2] in POSSESSION_LABELS for segment in _segments(truth, runs))
+    predicted_spells = sum(segment[2] in POSSESSION_LABELS for segment in _segments(filled, runs))
 
     return {
         "accuracy": accuracy,
@@ -199,7 +215,11 @@ def evaluate_synthetic(
         "fragmentation": pred_segments / gt_segments if gt_segments else 0.0,
         "ground_truth_segments": gt_segments,
         "predicted_segments": pred_segments,
+        "ground_truth_spells": true_spells,
+        "predicted_spells": predicted_spells,
         "missing_ball_accuracy": missing_ball_accuracy,
         "dead_ball_f1": (2 * dead_tp / dead_denominator if dead_denominator else 0.0),
+        "alive_dead_f1": (2 * alive_tp / alive_denominator if alive_denominator else 0.0),
+        "team_accuracy": (correct_team_frames / true_alive_frames if true_alive_frames else 0.0),
         "graded_frames": n_graded,
     }

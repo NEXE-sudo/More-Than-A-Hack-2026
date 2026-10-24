@@ -22,12 +22,13 @@ The local generator creates frame-aligned labels independently of the feature di
 deterministically generates tracking positions from explicit seeds. It includes stable home/away,
 possession turnovers with short/long pass flight intervals, an abrupt interception, contested/
 ungraded intervals, ball occlusion and aerial displacement, goalkeeper possession, a dead-ball
-restart, adversarial close observations/missing tracks, and a half-boundary reset. The restart
-scenario supports throw-ins, corners, free kicks, goal kicks, kick-offs and other stoppages;
-throw-ins deliberately carry `Team=N/A`. Parameters include duration, frame rate, pitch dimensions,
-player count, track availability, ball visibility and coordinate noise. Players move coherently
-toward changing targets, with observation dropout/noise and configured scenario interruptions.
-These simulations are test fixtures, not realistic match replicas.
+restart, adversarial close observations, ball/player-track dropout, boundary-start/end transitions,
+contradictory proximity, and a half-boundary reset. The restart scenario supports throw-ins, corners,
+free kicks, goal kicks, kick-offs and other stoppages; throw-ins deliberately carry `Team=N/A`.
+Parameters include duration, frame rate, pitch dimensions, player count, track availability, ball
+visibility and coordinate noise. Players move coherently toward changing targets, with observation
+dropout/noise and configured scenario interruptions. These simulations are test fixtures, not
+realistic match replicas.
 
 Run the complete fixed matrix:
 
@@ -36,7 +37,8 @@ possession run-synthetic-experiments --output-dir outputs/synthetic-experiments
 ```
 
 Optional `--seeds`, `--scenarios`, and `--duration-seconds` arguments narrow or extend the run.
-The default matrix uses seeds 11, 29 and 47; ten scenario families; and nine configurations:
+The default matrix uses seeds 11, 29 and 47; 15 canonical scenario families; and nine
+configurations:
 
 1. baseline model + baseline decoder,
 2. revised model + baseline decoder,
@@ -51,30 +53,35 @@ The default matrix uses seeds 11, 29 and 47; ten scenario families; and nine con
 Each row records its seed, scenario, full configuration, model/decoder version, sample count,
 runtime, warnings, frame and spell metrics, transition diagnostics, and abstention/missing-ball
 behavior. CSV and JSON are machine-readable; the Markdown report summarizes mean and standard
-deviation across scenario/seed runs, not frames. Outputs are local and ignored by Git.
+deviation across scenario/seed runs, not frames. The 20 additional accepted scenario names are
+explicit aliases for canonical generators. Aliases normalize to their canonical family before
+generation and aggregation, so requesting both a canonical name and an alias does not duplicate or
+overweight a family. Outputs are local and ignored by Git.
 
 ## Synthetic results (not competition performance)
 
-Results from the default 30-sequence run per configuration:
+Results from the canonical 45-sequence run per configuration (15 families × 3 seeds):
 
-| Configuration | macro-F1 mean ± SD | spellF1 mean ± SD | false switches/min |
+| Configuration | macro-F1 mean ± SD | spellF1 mean ± SD | switches/min |
 |---|---:|---:|---:|
-| Baseline model + baseline decoder | 0.397 ± 0.124 | 0.692 ± 0.297 | 2.90 |
-| Revised model + baseline decoder | 0.353 ± 0.131 | 0.619 ± 0.327 | 2.28 |
-| Baseline model + revised decoder | 0.400 ± 0.125 | 0.697 ± 0.293 | 2.90 |
-| Revised model + revised decoder | 0.361 ± 0.129 | 0.629 ± 0.319 | 2.40 |
-| Revised without proximity | 0.008 ± 0.032 | 0.000 ± 0.000 | 0.00 |
-| Revised without local support | 0.373 ± 0.122 | 0.649 ± 0.322 | 2.40 |
-| Revised without approach | 0.371 ± 0.127 | 0.675 ± 0.302 | 2.15 |
-| Revised, Smart Tagging off | 0.361 ± 0.129 | 0.629 ± 0.319 | 2.40 |
-| Revised, Smart Tagging on | 0.361 ± 0.129 | 0.629 ± 0.319 | 2.40 |
+| Baseline model + baseline decoder | 0.352 ± 0.140 | 0.662 ± 0.337 | 2.27 |
+| Revised model + baseline decoder | 0.332 ± 0.127 | 0.653 ± 0.341 | 1.68 |
+| Baseline model + revised decoder | 0.354 ± 0.141 | 0.665 ± 0.335 | 2.27 |
+| Revised model + revised decoder | 0.333 ± 0.130 | 0.637 ± 0.345 | 1.85 |
+| Revised without proximity | 0.006 ± 0.026 | 0.000 ± 0.000 | 0.00 |
+| Revised without local support | 0.340 ± 0.129 | 0.650 ± 0.347 | 1.85 |
+| Revised without approach | 0.340 ± 0.131 | 0.668 ± 0.335 | 1.68 |
+| Revised, Smart Tagging off | 0.333 ± 0.130 | 0.637 ± 0.345 | 1.85 |
+| Revised, Smart Tagging on | 0.333 ± 0.130 | 0.637 ± 0.345 | 1.85 |
 
 This does not demonstrate a robust improvement: the revised evidence model regressed on the
 aggregate synthetic spell score, and the revised decoder's switch-contest handling did not improve
-aggregate spellF1. Smart Tagging's aggregate scores were unchanged. Per-family variability is
-substantial (the stable single-team cases score perfectly on spellF1, while restart, transition and
-half-reset cases are harder). Keep the baseline defaults. Do not tune from these few stylized
-sequences or interpret them as predictions for the match.
+aggregate spellF1. Smart Tagging's aggregate scores were unchanged. Means and sample standard
+deviations are pooled descriptively across scenario/seed cases, which are not independent samples
+from real matches or confidence intervals. Per-family variability is substantial (stable
+single-team cases score perfectly on spellF1, while restart, transition and half-reset cases are
+harder). Keep the baseline defaults. Do not tune from these few stylized sequences or interpret
+them as predictions for the match.
 
 ## Public-window evaluation
 
