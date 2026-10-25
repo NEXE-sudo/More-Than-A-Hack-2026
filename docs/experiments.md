@@ -15,6 +15,11 @@ The metric implementation was checked in the unchanged sibling repository at
   0.5, 0.6 and 0.7. `spellF1` is the mean F1 over these thresholds.
 - The synthetic helper implements these rules. Its hand-built tests cover empty sequences,
   one-frame spells, abstention fills, ungraded gaps and fragmented/overlapping spells.
+- The official scoreboard ranks by `spell_f1_mean` descending. Exact ties are broken by macro-F1
+  descending, transition F1 at the loosest configured tolerance descending, mean absolute transition
+  latency ascending, then submission name ascending. Macro-F1 is a tie-break and a separate
+  frame-level diagnostic, not the primary ranking metric. This is the unchanged official
+  `rank_key` implementation.
 
 ## Synthetic harness and reproducible command
 
@@ -421,9 +426,241 @@ PYTHONPATH="src:$YOLOX_SOURCE" \
   --threads 8
 ```
 
+## Reproducible official baseline and local data audit
+
+Before comparing a candidate, run the unchanged official generator twice and score both runs with
+the unchanged official evaluator:
+
+```bash
+possession run-baseline-audit \
+  --repo-root "$REPO_ROOT" \
+  --data-root "$DATA_ROOT" \
+  --output-dir outputs/baseline-audit \
+  --bootstrap 1000
+```
+
+The command records the tactical ATD input checksums, baseline/evaluator source checksums,
+repository revisions, the baseline's declared variants, prediction SHA-256 checksums, per-run
+public metrics, and whether predictions and metrics match across runs. It refuses a non-empty
+output directory instead of overwriting existing files. Its Markdown and JSON reports, generated
+predictions, and evaluator outputs are local artifacts; the reported 7,500 frames and 17 spells
+are the public window only, not full-match accuracy evidence.
+
+To summarize local tracking and homography coverage, optionally inspecting and fully decoding the
+tactical video:
+
+```bash
+possession audit-data \
+  --metadata "$ATD_META" \
+  --tracking "$ATD_RAW" \
+  --homography "$HOMOGRAPHY" \
+  --video "$TACTICAL_VIDEO" \
+  --decode-video \
+  --output outputs/local-data-audit.json
+```
+
+The JSON contains aggregate missingness, coordinate-policy counts, homography validity and
+round-trip summaries, and video frame-rate/count/timestamp checks. It does not contain frame-level
+tracking, video, or possession labels. Homography round-trip error is an algebraic consistency
+check, not independent evidence that the pitch calibration is accurate. Full video decoding is
+opt-in. The output path must not already exist; use an ignored or external output directory.
+
+Record candidate results only against the authorized public ground truth:
+
+```bash
+possession record-experiment \
+  --repo-root "$REPO_ROOT" \
+  --prediction outputs/nexe.csv \
+  --output-dir outputs/experiments/candidate-default \
+  --experiment-id candidate-default \
+  --description "Candidate default configuration" \
+  --generation-command "possession predict ..." \
+  --config configs/default.toml \
+  --bootstrap 1000
+
+possession compare-experiments \
+  outputs/baseline-audit/baseline-audit.json \
+  outputs/experiments/candidate-default/experiment-report.json
+```
+
+Candidate records capture the supplied generation command, resolved configuration, revision and
+official scorer checksums, prediction checksum, public-scope metrics, source-input checksums, and a
+local copy of the prediction. Comparison checks that evaluation window, ground-truth checksums,
+evaluator and metric checksums, and source-input checksums are compatible; it warns about missing
+provenance and mismatched metrics/window counts. It is a report formatter, not a new metric
+implementation. Use stable experiment IDs and concise commands that do not embed credentials or
+private labels. Keep all generated artifacts local and excluded from Git as described in
+[data handling](data_handling.md). The public window is too small to justify tuning or claims of
+full-match accuracy.
+
+## Verified official baseline and data audit
+
+The unchanged official baseline generator and evaluator were run twice against the locally supplied
+tactical tracking inputs. Both runs covered the official public evaluation scope: 7,500 graded
+frames and 17 ground-truth possession spells in one contiguous five-minute interval. The generated
+prediction CSVs were byte-identical between runs, and the reported metrics were identical.
+
+| Official baseline variant | Smoothing half-width | Public-window spellF1 | Public-window macro-F1 |
+|---|---:|---:|---:|
+| `baseline_raw` | 0 frames | 0.03784 | 0.59723 |
+| `baseline_smooth25` | 25 frames | 0.28679 | 0.61999 |
+| `baseline_smooth50` | 50 frames | 0.32558 | 0.62073 |
+| `baseline_smooth125` | 125 frames | 0.42424 | 0.58119 |
+
+These are public-window results, not full-match accuracy estimates. The audit report locally records
+the input, baseline, evaluator, metric, and baseline-dependency checksums, repository revisions and
+worktree state, public ground-truth hashes and scope, variant configuration, prediction checksums,
+and per-run metrics. The full report contains data-derived provenance and remains local-only.
+
+The official baseline's `smooth(codes, window)` uses a centered, inclusive half-width in frames:
+the interior window is `2 * window + 1` frames, while endpoints use the available truncated span
+without padding. A zero width returns each frame's unsmoothed team code, mapping no-observation to
+D. For positive widths, only H/A observations vote; no votes produce D, and a tie goes to H.
+Missing-ball observations are represented as no-observation and are not treated as zero or
+interpolated. Tests exercise zero/default widths, short sequences, oversized windows, endpoints,
+abrupt transitions, short spells, missing observations, deterministic output, and frame/CSV
+preservation against the unchanged official function.
+
+## Aggregate public-window error analysis
+
+Generate aggregate-only diagnostics from a completed baseline audit:
+
+```bash
+possession analyze-baseline-errors \
+  --repo-root "$REPO_ROOT" \
+  --audit-dir outputs/baseline-audit \
+  --output-dir outputs/baseline-error-analysis \
+  --run-id run-1
+```
+
+The command validates the audit's public-ground-truth scope, source checksums, prediction
+checksums, and evaluator metrics before analysis. It calls the unchanged official spell extraction,
+greedy IoU matching, transition metrics, and abstention-fill helpers. JSON and Markdown outputs are
+aggregate-only and must remain under ignored local output directories. No frame-level labels,
+predictions, or sensitive timestamps are emitted.
+
+Measured at spell IoU 0.5 and transition tolerance ±25 frames:
+
+| Variant | Predicted spells | False-positive spells | Missed GT spells | Missed boundaries | Spurious boundaries | Official segment-fragmentation ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| `baseline_raw` | 131 | 129 | 15 | 9 | 125 | 6.52 |
+| `baseline_smooth25` | 36 | 28 | 9 | 14 | 33 | 1.90 |
+| `baseline_smooth50` | 26 | 19 | 10 | 18 | 27 | 1.43 |
+| `baseline_smooth125` | 16 | 9 | 10 | 17 | 13 | 0.81 |
+
+The fragmentation ratio is the scorer's ground-truth-to-predicted segment ratio; it is not a
+causal classification of individual split or merged spells. At IoU 0.5, the descriptive median
+split of this sample gives 9 shorter and 8 longer ground-truth spells; missed counts in those
+groups were raw 7/8, width 25 6/3, width 50 6/4, and width 125 7/3. With only 17 spells these
+subgroup counts are unstable and should not be generalized.
+
+Among graded public frames, pairwise variant predictions differed on 801 frames (raw vs 25),
+1,242 (raw vs 50), 1,838 (raw vs 125), 564 (25 vs 50), 1,342 (25 vs 125), and 917 (50 vs 125).
+These are observed disagreements, not an account of why any particular prediction was wrong.
+Variant source code and input were controlled, with the smoothing half-width as the only intended
+configuration difference.
+
+## Bounded smoothing sensitivity check
+
+Before running, the two candidate widths were fixed at 75 and 100 frames to check whether the
+observed 50-to-125 public-window increase also appeared at intermediate widths. The experiment was
+run twice per width through the unchanged official generator and scorer with `--bootstrap 1000`:
+
+```bash
+possession run-smoothing-sensitivity \
+  --repo-root "$REPO_ROOT" \
+  --data-root "$DATA_ROOT" \
+  --output-dir outputs/smoothing-sensitivity \
+  --bootstrap 1000
+```
+
+The local report records experiment IDs, widths, source/evaluator revisions and checksums,
+tracking-input checksums, evaluation scope, prediction checksums, per-run metrics, and
+reproducibility. Both widths produced byte-identical predictions and identical metrics across the
+two runs. The interval below is the official 5th–95th percentile spellF1 bootstrap interval:
+
+| Half-width | Public-window spellF1 | Public-window macro-F1 | SpellF1 bootstrap 5–95% |
+|---:|---:|---:|---:|
+| 0 | 0.03784 | 0.59723 | 0.01892–0.05946 |
+| 25 | 0.28679 | 0.61999 | 0.19623–0.38491 |
+| 50 | 0.32558 | 0.62073 | 0.21395–0.44651 |
+| 75 | 0.40000 | 0.60336 | 0.26229–0.54857 |
+| 100 | 0.44848 | 0.59763 | 0.29091–0.60667 |
+| 125 | 0.42424 | 0.58119 | 0.26667–0.59394 |
+
+The official spell bootstrap resamples the 17 ground-truth possession spells with replacement.
+For each IoU threshold, it first computes each ground-truth spell's match flag against the
+original predictions, then resamples those flags; the number of predicted spells stays fixed.
+False positives are clamped to zero if a resample contains more matched flags than the fixed
+predicted-spell count. The implementation uses NumPy `RandomState` seed 0, 1,000 draws, and
+`numpy.percentile`'s default linear interpolation for the 5th and 95th percentiles. With zero
+draws or no ground-truth possessions the scorer returns no interval; a draw with no matches has
+F1 zero. The percentile interval is conditional on the original prediction set and its greedy
+matches; it is not a bootstrap over frames, contiguous time blocks, or independent matches.
+
+Resampling whole possessions avoids treating frames within a possession as independent, but it
+does not preserve dependence between adjacent possessions or represent match-to-match variation.
+A single five-minute interval is not a basis for statistical robustness, generalization, or
+selecting a production width. The 5–95% intervals for smoothed widths 25 through 125 overlap
+substantially; overlap does not establish equivalence. The raw variant's interval is lower and
+separate on this sample, but that separation does not establish generalization. A higher point
+estimate does not establish a generalizable improvement. These runs were descriptive only; the
+production defaults and official variants were not changed. Full-match possession accuracy
+remains unverified.
+
+The sensitivity-run aggregate error report is written separately by the same command:
+
+```bash
+possession analyze-baseline-errors \
+  --repo-root "$REPO_ROOT" \
+  --audit-dir outputs/smoothing-sensitivity \
+  --output-dir outputs/smoothing-sensitivity-errors \
+  --run-id run-1
+```
+
+At IoU 0.5, widths 75 and 100 had 11/9 and 9/10 false-positive/missed spells, respectively.
+Their median-split missed-spell counts were 6/4 and 7/3 across 9 short and 8 long spells. These
+are descriptions of one public sample, not evidence of a causal mechanism or general improvement.
+
+The aggregate tracking/homography audit report was generated without `--video` and correctly
+records that particular inspection as blocked; that does not establish that a local tactical video
+is absent. A separate local inspection found the tactical asset and checked metadata plus sparse
+decodes (see [data handling](data_handling.md)). Independent calibration accuracy remains blocked:
+no independently measured pitch landmarks with corresponding image coordinates and measurement
+uncertainty were available. Homography round-trip error is an algebraic consistency check only.
+
+No candidate comparison or classifier training is justified by the available possession labels.
+The public labels represent only 17 spells in one short contiguous interval; tracking, Smart Tagging,
+and model outputs are not possession ground truth. No production model, decoder, default, official
+baseline, evaluator, or ground truth was changed. Full-match possession accuracy remains
+unverified.
+
+Reproduce the official baseline audit with the command above, using a private local `DATA_ROOT` in
+the expected layout; if supplied files are split across directories, create only local symlinks to
+the originals in a temporary data-root. The aggregate audit can explicitly record unavailable
+video/calibration evidence without exporting frame data:
+
+```bash
+possession audit-data \
+  --metadata "$ATD_META" \
+  --tracking "$ATD_RAW" \
+  --homography "$HOMOGRAPHY" \
+  --output outputs/local-data-audit.json
+```
+
+To proceed with a defensible video experiment, first supply authorized tactical video and verify
+its frame alignment, then validate calibration against independently measured landmarks. Before
+training a possession classifier, obtain more independent, permitted possession labels across
+separated intervals or matches. Any future validation split must separate contiguous time intervals
+to limit adjacent-frame leakage. Keep all inputs, reports, and derived files local as described in
+[data handling](data_handling.md).
+
 ## Next evaluation
 
-The full-match candidate is now reproducible from the local tactical inputs, but no permitted
+The full-match candidate is reproducible from local tactical tracking inputs, but no permitted
 full-match possession ground truth is available for accuracy validation. Preserve the official
 baseline and scorer as controls. Do not choose thresholds from the 17-spell public slice. Include
-Smart Tagging only as an ablation, never as possession labels.
+Smart Tagging only as an ablation, never as possession labels. The YOLOX-Nano pilot remains a
+no-go for production integration; any renewed detector work requires independently annotated,
+held-out tactical-view ball visibility and bounding boxes. See the [video feasibility findings
+above](#yolox-nano-video-feasibility-pilot).

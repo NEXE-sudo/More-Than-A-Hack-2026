@@ -91,3 +91,28 @@ sequence. No memory benchmark is implied by this implementation detail.
 The official public CSV covers only the opening five minutes and 17 possessions. It is used only
 for allowed evaluation, never as model input. The private full-match labels are unavailable and
 must not be inferred or sought; public-window scores do not establish full-match accuracy.
+
+## Audit scope and calibration evidence
+
+The aggregate `audit-data` report contains summary counts and status fields only; it does not export
+frame-level tracking, video, or possession labels. The earlier aggregate report did not receive a
+video path and reports that inspection as blocked; that status is specific to that run, not evidence
+that no local video exists. A tactical video is present in the documented local `Data/` area.
+`ffprobe` reports H.264, 1920×1080, 25 fps, 199,319 frames and 7,972.76 seconds. Four sparse seeks
+at 0, 500, 600 and 745 seconds decoded one frame each. The video-reported count matches the
+199,319 tracking frame records and homography rows; the documented frame convention maps ATD IDs
+1..199319 to zero-based frames 0..199318 and homography rows to those same indices.
+
+These checks did not fully decode the entire video or independently establish the video's temporal
+origin relative to tracking. Five selected video frames at representative points decoded at their
+requested indexes, and their presentation timestamps matched a zero-origin 25 fps frame sequence.
+A metadata count, nominal frame rate, sampled seek/decode success, matching row counts and these
+sampled timestamps support index/cadence consistency, not proof of absolute synchronization. Any
+future synchronization claim must preserve that limitation.
+
+Independent homography-accuracy validation is also blocked unless authorized, independently
+measured pitch landmarks and corresponding image coordinates for matching tactical frames are
+available, with documented units and measurement uncertainty. A homography round trip verifies
+algebraic consistency only; it is not an independent calibration test. No independent landmark or
+calibration-reference files were found in the documented local dataset directories during this
+inspection. Keep aggregate audit reports local because they are derived from gated inputs.

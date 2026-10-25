@@ -47,6 +47,7 @@ moved into one directory:
 export ATD_META=/path/to/local/BAR-ATH_tactical_atd.xml
 export ATD_RAW=/path/to/local/BAR-ATH_tactical_atd.txt
 export HOMOGRAPHY=/path/to/local/BAR-ATH_tactical_homography.csv
+export TACTICAL_VIDEO=/path/to/local/BAR-ATH_tactical.mp4
 export SMART_TAGGING=/path/to/local/BAR-ATH_tactical_smart_tagging.xml
 ```
 
@@ -74,6 +75,26 @@ possession validate-data \
 possession run-baseline --repo-root "$REPO_ROOT" --data-root "$DATA_ROOT" \
   --output-dir outputs/official-baselines
 
+# Audit aggregate tracking/homography data and optionally the tactical video.
+# Full decoding is opt-in because it reads the entire local video.
+possession audit-data --metadata "$ATD_META" --tracking "$ATD_RAW" \
+  --homography "$HOMOGRAPHY" --video "$TACTICAL_VIDEO" \
+  --decode-video --output outputs/local-data-audit.json
+
+# Generate and publicly evaluate the unchanged official baseline twice.
+# Keep the reports, predictions, and evaluator outputs local.
+possession run-baseline-audit --repo-root "$REPO_ROOT" --data-root "$DATA_ROOT" \
+  --output-dir outputs/baseline-audit --bootstrap 1000
+
+# Run the fixed, descriptive smoothing sensitivity check (half-widths 75 and 100 only)
+possession run-smoothing-sensitivity --repo-root "$REPO_ROOT" --data-root "$DATA_ROOT" \
+  --output-dir outputs/smoothing-sensitivity --bootstrap 1000
+
+# Generate aggregate-only error diagnostics from a completed audit
+possession analyze-baseline-errors --repo-root "$REPO_ROOT" \
+  --audit-dir outputs/baseline-audit \
+  --output-dir outputs/baseline-error-analysis --run-id run-1
+
 # Build a source-verified feature cache or generate a candidate
 possession build-features --metadata "$ATD_META" \
   --tracking "$ATD_RAW" --config configs/default.toml \
@@ -94,6 +115,27 @@ possession evaluate --repo-root "$REPO_ROOT" --results-dir outputs \
 # Compare the fixed model/decoder matrix without gated match data
 possession run-synthetic-experiments --output-dir outputs/synthetic-experiments
 ```
+
+To record a candidate's public evaluation with its generation command and configuration, use:
+
+```bash
+possession record-experiment --repo-root "$REPO_ROOT" \
+  --prediction outputs/nexe.csv \
+  --output-dir outputs/experiments/candidate \
+  --experiment-id candidate-default \
+  --description "Current default configuration" \
+  --generation-command "possession predict ..." \
+  --config configs/default.toml
+possession compare-experiments \
+  outputs/baseline-audit/baseline-audit.json \
+  outputs/experiments/candidate/experiment-report.json
+```
+
+Reports and a local copy of the prediction are written below the output directory. Comparison
+checks evaluation scope, ground-truth, evaluator, metric, and source-input provenance and warns when
+the reports are not directly comparable. See [docs/experiments.md](docs/experiments.md) for report
+contents, aggregate baseline error analysis, smoothing sensitivity, and the limits of public-window
+evaluation. Both new diagnostics are local-only; they do not change the production defaults.
 
 `configs/default.toml` contains the frame rate, pitch dimensions and decoder thresholds. CLI paths
 are explicit, resolved via `pathlib`, and do not depend on the current directory. The optional
@@ -128,7 +170,9 @@ python "$REPO_ROOT/evaluation/validate_submission.py" outputs/nexe.csv
 ```
 
 The synthetic command writes CSV/JSON run records and a Markdown report beneath the selected output
-directory. These controlled simulations are not official evaluation results. See
+directory. These controlled simulations are not official evaluation results. Data-audit and
+experiment commands can write local, data-derived artifacts, so keep them under ignored
+`outputs/`, `cache/`, or `artifacts/` directories and never commit or redistribute them. See
 [docs/experiments.md](docs/experiments.md) for their scope and limitations.
 
 ## Output contract
@@ -137,19 +181,22 @@ The CSV has exactly `frame,label`, 199,319 rows indexed `0..199318`, in tactical
 labels from `H`, `A`, `D`, `X`. The default prediction uses normalized ATD locations and emits `X`
 for long periods without team evidence rather than retaining a prior team indefinitely. The baseline's
 conservative dead-ball prior requires sustained ball absence plus low speeds for both teams and
-adequate track coverage. The local tactical bundle was available for full-match candidate generation
-and public-window evaluation. Public scoring covers only 7,500 frames and 17 possession spells in
-one contiguous five-minute interval. Running the candidate over all frames does not validate
-full-match accuracy; an occlusion or Smart Tagging interval alone never becomes D.
+adequate track coverage. Local tactical tracking and related inputs were available for ingestion and
+full-match candidate generation. Public-window evaluation was performed only on 7,500 frames and 17
+possession spells in one contiguous five-minute interval. Running the candidate over the full match
+does not validate its accuracy on the full match; an occlusion or Smart Tagging interval alone never
+becomes D.
 
 ## Limitations and reproducibility
 
-The gated tracking bundle was supplied locally for ingestion and candidate generation but is not
-versioned. Its use requires explicit input paths, and generated predictions and derived diagnostics
-must remain local. Public-window evaluation was performed on the opening five minutes (7,500 frames,
-17 possession spells); it does not validate full-match possession accuracy or generalization.
+The local tactical tracking inputs were supplied for ingestion and candidate generation but are not
+versioned. Their use requires explicit input paths, and generated predictions and derived
+diagnostics must remain local. The public-window evaluation covers only the opening five minutes
+(7,500 frames, 17 possession spells); it does not establish full-match accuracy or generalization.
 Independent permitted full-match possession ground truth is unavailable. The candidate can be run
 over the full match and generates deterministic predictions, but its full-match accuracy remains
-unverified. No trained classifier is included. See
-[docs/experiments.md](docs/experiments.md) for measured results and blockers.
+unverified. No trained classifier is included. See [docs/experiments.md](docs/experiments.md) for
+the measured baseline results, video/calibration blockers, and experiment prerequisites.
+See the [submission-readiness checklist](docs/submission-readiness.md) for verified contract
+details and remaining compliance blockers.
 # More-Than-A-Hack-2026

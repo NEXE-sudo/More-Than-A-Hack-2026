@@ -10,6 +10,8 @@ def run_official_baseline(
     repository_root: Path | str,
     data_root: Path | str,
     output_dir: Path | str,
+    *,
+    smoothing_half_widths: tuple[int, ...] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run starter/baseline.py in its own repository, surfacing output and exit code."""
     root = Path(repository_root).expanduser().resolve()
@@ -20,8 +22,18 @@ def run_official_baseline(
     destination.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["MTAH_DATA_DIR"] = str(Path(data_root).expanduser().resolve())
+    command = [sys.executable, str(script), "--out", str(destination)]
+    if smoothing_half_widths is not None:
+        if not smoothing_half_widths or any(
+            isinstance(width, bool) or not isinstance(width, int) or width < 0
+            for width in smoothing_half_widths
+        ):
+            raise ValueError("smoothing half-widths must be non-negative integers")
+        if len(set(smoothing_half_widths)) != len(smoothing_half_widths):
+            raise ValueError("smoothing half-widths must be unique")
+        command.extend(["--window", *(str(width) for width in smoothing_half_widths)])
     result = subprocess.run(
-        [sys.executable, str(script), "--out", str(destination)],
+        command,
         cwd=root,
         env=env,
         text=True,

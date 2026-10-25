@@ -24,3 +24,4 @@ artifacts/**
 *.log
 *.tmp
 *.prof
+.DS_Store

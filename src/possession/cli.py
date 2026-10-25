@@ -1,17 +1,30 @@
 """Command-line entry points for validation, prediction, and official integration."""
 
 import argparse
+import csv
+import json
 import subprocess
 import sys
+import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
 
 from possession import __version__
 from possession.config import Config, load_config
+from possession.data.audit import audit_tracking_homography, inspect_video
 from possession.data.loaders import load_homography, load_smart_tagging, load_tracking
 from possession.data.validation import validate_submission_file
+from possession.evaluation.error_analysis import analyze_baseline_audit
 from possession.evaluation.official_adapter import run_official_baseline, run_official_evaluator
+from possession.evaluation.reproducibility import (
+    compare_experiment_reports,
+    ensure_local_output_path,
+    record_prediction_experiment,
+    run_baseline_audit,
+    run_smoothing_sensitivity_audit,
+)
 from possession.experiments import run_experiments
 from possession.features.cache import save_feature_cache
 from possession.features.context import tagging_context
@@ -36,11 +49,66 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("--frames", type=int, default=199319)
     validate.set_defaults(action=_validate_data)
 
+    audit = commands.add_parser("audit-data")
+    audit.add_argument("--metadata", required=True, type=Path)
+    audit.add_argument("--tracking", required=True, type=Path)
+    audit.add_argument("--homography", required=True, type=Path)
+    audit.add_argument("--video", type=Path)
+    audit.add_argument("--decode-video", action="store_true")
+    audit.add_argument("--frames", type=int, default=199319)
+    audit.add_argument("--config", type=Path)
+    audit.add_argument("--output", required=True, type=Path)
+    audit.set_defaults(action=_audit_data)
+
     baseline = commands.add_parser("run-baseline")
     baseline.add_argument("--repo-root", required=True, type=Path)
     baseline.add_argument("--data-root", required=True, type=Path)
     baseline.add_argument("--output-dir", required=True, type=Path)
     baseline.set_defaults(action=_run_baseline)
+
+    baseline_audit = commands.add_parser("run-baseline-audit")
+    baseline_audit.add_argument("--repo-root", required=True, type=Path)
+    baseline_audit.add_argument("--data-root", required=True, type=Path)
+    baseline_audit.add_argument("--output-dir", required=True, type=Path)
+    baseline_audit.add_argument("--bootstrap", type=int, default=1000)
+    baseline_audit.set_defaults(action=_run_baseline_audit)
+
+    sensitivity = commands.add_parser("run-smoothing-sensitivity")
+    sensitivity.add_argument("--repo-root", required=True, type=Path)
+    sensitivity.add_argument("--data-root", required=True, type=Path)
+    sensitivity.add_argument("--output-dir", required=True, type=Path)
+    sensitivity.add_argument("--bootstrap", type=int, default=1000)
+    sensitivity.set_defaults(action=_run_smoothing_sensitivity)
+
+    error_analysis = commands.add_parser("analyze-baseline-errors")
+    error_analysis.add_argument("--repo-root", required=True, type=Path)
+    error_analysis.add_argument("--audit-dir", required=True, type=Path)
+    error_analysis.add_argument("--output-dir", required=True, type=Path)
+    error_analysis.add_argument("--run-id", choices=("run-1", "run-2"), default="run-1")
+    error_analysis.set_defaults(action=_analyze_baseline_errors)
+
+    record = commands.add_parser("record-experiment")
+    record.add_argument("--repo-root", required=True, type=Path)
+    record.add_argument("--prediction", required=True, type=Path)
+    record.add_argument("--output-dir", required=True, type=Path)
+    record.add_argument("--experiment-id", required=True)
+    record.add_argument("--description", required=True)
+    record.add_argument("--generation-command", required=True)
+    record.add_argument("--config", type=Path)
+    record.add_argument(
+        "--source-input",
+        action="append",
+        default=[],
+        type=Path,
+        help="input file to checksum (repeat for each input used to generate the prediction)",
+    )
+    record.add_argument("--ground-truth", default="public")
+    record.add_argument("--bootstrap", type=int, default=1000)
+    record.set_defaults(action=_record_experiment)
+
+    compare = commands.add_parser("compare-experiments")
+    compare.add_argument("reports", nargs="+", type=Path)
+    compare.set_defaults(action=_compare_experiments)
 
     build = commands.add_parser("build-features")
     build.add_argument("--metadata", required=True, type=Path)
@@ -127,6 +195,195 @@ def _validate_data(args: argparse.Namespace) -> int:
 
 def _run_baseline(args: argparse.Namespace) -> int:
     run_official_baseline(args.repo_root, args.data_root, args.output_dir)
+    return 0
+
+
+def _audit_data(args: argparse.Namespace) -> int:
+    if args.decode_video and args.video is None:
+        raise ValueError("--video is required when --decode-video is used")
+    destination = args.output.expanduser().resolve()
+    ensure_local_output_path(destination)
+    if destination.exists():
+        raise ValueError(f"audit output already exists; refusing to overwrite: {destination}")
+    config = load_config(args.config) if args.config else Config()
+    tracking = load_tracking(args.metadata, args.tracking, args.frames)
+    matrices, errors, valid = load_homography(args.homography, args.frames)
+    video_info = inspect_video(args.video, decode=args.decode_video) if args.video else None
+    audit = audit_tracking_homography(
+        tracking,
+        matrices,
+        errors,
+        valid,
+        pitch_length_m=config.data.pitch_length_m,
+        pitch_width_m=config.data.pitch_width_m,
+        video_width=None if video_info is None else video_info["width"],
+        video_height=None if video_info is None else video_info["height"],
+    )
+    if video_info is not None:
+        fps = config.data.fps
+        audit["video"] = video_info
+        count_matches = video_info["decoded_frame_count"] == tracking.n_frames
+        timestamps_match = video_info["timestamp_samples"] == video_info["decoded_frame_count"]
+        fps_matches = Fraction(video_info["frame_rate"]) == fps
+        cadence_ok = video_info["cadence_within_tolerance"]
+        audit["alignment"] = {
+            "video_tracking_frame_count_matches": count_matches,
+            "video_frame_rate_matches_config": fps_matches,
+            "video_timestamp_count_matches_decoded_count": timestamps_match,
+            "video_timestamp_cadence_matches_frame_indices": cadence_ok,
+            "tracking_indices_zero_based": audit["frame_index_range"] == [0, args.frames - 1],
+            "homography_rows_align_with_tracking": len(valid) == tracking.n_frames,
+            "temporal_origin_independently_verified": False,
+        }
+        audit["video_sync_status"] = (
+            "index_and_cadence_consistent_but_temporal_origin_not_independently_verified"
+            if all((count_matches, timestamps_match, fps_matches, cadence_ok))
+            else "alignment_checks_failed"
+        )
+    else:
+        audit["video_status"] = {
+            "status": "blocked",
+            "reason": "tactical video was not supplied",
+            "next_step": "set TACTICAL_VIDEO to the authorized local file and pass --video "
+            '"$TACTICAL_VIDEO"',
+        }
+    audit["calibration_validation"] = {
+        "status": "blocked",
+        "method": "independent image-to-pitch landmark reprojection",
+        "independent_reference_count": 0,
+        "reason": "no independently established pitch landmarks and corresponding image "
+        "coordinates were supplied",
+        "required_evidence": (
+            "authorized, independently measured pitch landmarks with image coordinates for "
+            "matching tactical frames, documented units, and measurement uncertainty"
+        ),
+    }
+    report = {
+        "report_type": "aggregate_local_data_audit",
+        "sensitive_inputs_not_recorded": True,
+        "video_decode_requested": args.decode_video,
+        "summary": audit,
+    }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n")
+        temporary.replace(destination)
+    except (OSError, TypeError, ValueError):
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
+    print(f"wrote aggregate local audit to {destination}")
+    return 0
+
+
+def _run_baseline_audit(args: argparse.Namespace) -> int:
+    report = run_baseline_audit(
+        args.repo_root,
+        args.data_root,
+        args.output_dir,
+        bootstrap=args.bootstrap,
+    )
+    print(f"baseline audit status: {report['status']}")
+    print(
+        f"prediction files byte-identical: "
+        f"{report.get('determinism', {}).get('prediction_files_byte_identical')}"
+    )
+    return 0 if report["status"] == "complete" else 1
+
+
+def _run_smoothing_sensitivity(args: argparse.Namespace) -> int:
+    report = run_smoothing_sensitivity_audit(
+        args.repo_root,
+        args.data_root,
+        args.output_dir,
+        bootstrap=args.bootstrap,
+    )
+    print(f"smoothing sensitivity status: {report['status']}")
+    print(
+        "prediction files byte-identical: "
+        f"{report.get('determinism', {}).get('prediction_files_byte_identical')}"
+    )
+    return 0 if report["status"] == "complete" else 1
+
+
+def _analyze_baseline_errors(args: argparse.Namespace) -> int:
+    report = analyze_baseline_audit(
+        args.repo_root,
+        args.audit_dir,
+        args.output_dir,
+        run_id=args.run_id,
+    )
+    print(f"wrote aggregate official error analysis to {args.output_dir.expanduser().resolve()}")
+    print(
+        f"variants: {len(report['variants'])}; "
+        f"graded frames: {report['evaluation_scope']['graded_frames']}"
+    )
+    return 0
+
+
+def _record_experiment(args: argparse.Namespace) -> int:
+    report = record_prediction_experiment(
+        args.repo_root,
+        args.prediction,
+        args.output_dir,
+        experiment_id=args.experiment_id,
+        description=args.description,
+        generation_command=args.generation_command,
+        config_path=args.config,
+        source_inputs=tuple(args.source_input),
+        ground_truth=args.ground_truth,
+        bootstrap=args.bootstrap,
+    )
+    print(f"experiment status: {report['status']}")
+    print(f"report: {args.output_dir.expanduser().resolve() / 'experiment-report.json'}")
+    return 0
+
+
+def _compare_experiments(args: argparse.Namespace) -> int:
+    experiments, scope_mismatch = compare_experiment_reports(args.reports)
+    if scope_mismatch:
+        print(
+            "WARNING: report provenance, configuration, or evaluation scope differs or is "
+            "incomplete; review each row's comparison warnings before comparing scores.",
+            file=sys.stderr,
+        )
+    writer = csv.writer(sys.stdout, lineterminator="\n")
+    writer.writerow(
+        (
+            "experiment_id",
+            "scope",
+            "spell_f1_mean",
+            "macro_f1",
+            "status",
+            "project_revision",
+            "configuration_fingerprint",
+            "comparison_warnings",
+        )
+    )
+    for experiment in experiments:
+        metrics = experiment.get("metrics", {})
+        writer.writerow(
+            (
+                experiment.get("experiment_id"),
+                experiment.get("scope"),
+                metrics.get("spell_f1_mean", "n/a"),
+                metrics.get("macro_f1", "n/a"),
+                experiment.get("status", "unknown"),
+                experiment.get("project_revision", "unknown"),
+                experiment.get("configuration_fingerprint", "unknown"),
+                "; ".join(experiment.get("comparison_warnings", [])),
+            )
+        )
     return 0
 
 
