@@ -137,15 +137,19 @@ The CSV has exactly `frame,label`, 199,319 rows indexed `0..199318`, in tactical
 labels from `H`, `A`, `D`, `X`. The default prediction uses normalized ATD locations and emits `X`
 for long periods without team evidence rather than retaining a prior team indefinitely. The baseline's
 conservative dead-ball prior requires sustained ball absence plus low speeds for both teams and
-adequate track coverage. It is not validated against this match because the bundle is unavailable;
-an occlusion or Smart Tagging interval alone never becomes D.
+adequate track coverage. The local tactical bundle was available for full-match candidate generation
+and public-window evaluation. Public scoring covers only 7,500 frames and 17 possession spells in
+one contiguous five-minute interval. Running the candidate over all frames does not validate
+full-match accuracy; an occlusion or Smart Tagging interval alone never becomes D.
 
 ## Limitations and reproducibility
 
-The gated tracking bundle is supplied locally in this workspace but is not versioned. Its use
-requires explicit input paths, and generated predictions and derived diagnostics must remain local.
-The public labels cover only the opening five minutes and 17 possessions; they are not evidence of
-full-match accuracy or generalization. No trained classifier is included. Predictions are
-deterministic; all decoding settings are explicit. See [docs/experiments.md](docs/experiments.md)
-for measured results and blockers.
+The gated tracking bundle was supplied locally for ingestion and candidate generation but is not
+versioned. Its use requires explicit input paths, and generated predictions and derived diagnostics
+must remain local. Public-window evaluation was performed on the opening five minutes (7,500 frames,
+17 possession spells); it does not validate full-match possession accuracy or generalization.
+Independent permitted full-match possession ground truth is unavailable. The candidate can be run
+over the full match and generates deterministic predictions, but its full-match accuracy remains
+unverified. No trained classifier is included. See
+[docs/experiments.md](docs/experiments.md) for measured results and blockers.
 # More-Than-A-Hack-2026

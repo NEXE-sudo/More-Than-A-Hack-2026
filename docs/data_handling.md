@@ -10,15 +10,14 @@ data-derived exports, and do not upload them to hosted services. Keep generated 
 ignored `outputs/`, `cache/`, or `artifacts/` directories. Broadcast tracking has a separate,
 unsynchronized timeline and is not accepted as a tactical frame source.
 
-The `video-pilot` dependency group in `pyproject.toml` is for local detector feasibility
+The `video-pilot` dependency group in `video-pilot/pyproject.toml` is for local detector feasibility
 experiments only; it is not a project runtime extra and is not used by the production possession
-pipeline. Install it into an isolated Python 3.11 environment with
-`python -m pip install --upgrade pip` followed by `python -m pip install --group video-pilot`.
-It pins the Intel-Mac-compatible CPU stack and its NumPy 1.x ABI separately from the production
-environment. YOLOX source and weights are not
-installed by this group; acquire them separately for a local pilot, and keep downloaded weights,
-extracted frames, detections, and derived feature tables outside the repository. Verify the code
-and weight licenses before use or redistribution.
+pipeline. It has a separate `uv.lock` because its pinned NumPy 1.x CPU stack is incompatible with
+the production project's NumPy 2.x requirement. Create its isolated Python 3.11 environment with
+`uv sync --project video-pilot --only-group video-pilot --python 3.11`. YOLOX source and weights are
+not installed by this group; acquire them separately for a local pilot, and keep downloaded
+weights, extracted frames, detections, and derived feature tables outside the repository. Verify
+the code and weight licenses before use or redistribution.
 
 The standalone `scripts/video_perception_pilot.py` accepts explicit local video, tracking, and
 homography paths and writes its sampled feature CSV, summary, and inspection frames only to the

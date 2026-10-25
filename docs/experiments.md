@@ -357,6 +357,70 @@ possession evaluate \
   --output-dir "$OUTPUT_DIR/public-evaluation" --ground-truth public
 ```
 
+## YOLOX-Nano video feasibility pilot
+
+The pilot checked alignment before running a bounded detector sample. The tactical video is 1920×1080
+H.264 at 25 fps, with 199,319 frames over 7,972.76 seconds. Full FFmpeg decoding succeeded, and
+sparse OpenCV seek/decode checks at 11 points spanning both endpoints returned the requested
+frames. Tracking IDs map to video/submission frames `0..199318`, and homography rows cover the same
+range. The homography maps pitch coordinates to image coordinates; converting a video detection
+back to pitch coordinates requires the inverse transform.
+
+YOLOX-Nano was sampled on 66 frames across six intervals between frames 13,050 and 17,666. This was
+not a full-match detector evaluation:
+
+| Same-frame observations | Count |
+|---|---:|
+| Tracking and detector both reported a ball | 39 |
+| Tracking only | 5 |
+| Detector only | 11 |
+| Neither reported a ball | 11 |
+
+On the 39 paired observations, median image-space disagreement was 796.5 pixels and median
+homography-mapped disagreement was 37.2 metres. The p90 mapped movement estimate was 119.6 m/s,
+indicating substantial instability or false detections in this sample. Manual inspection of the 11
+detector-only hits found sideline detections in a tracking-gap interval. This was a small manual
+review, not a labelled precision estimate. The pilot took 134.378 seconds, including 12.475 seconds
+of inference (about 0.189 seconds per sampled frame); peak RSS was 652.8 MB. Full-match runtime was
+not measured.
+
+**Decision: no-go for integrating YOLOX-Nano into the production possession pipeline based on this
+evidence.** The pilot does not establish that the detector adds reliable ball information. No
+classifier was trained, and no production decoder, default, baseline, evaluator, or ground truth was
+changed. Existing public-window scores cover only the published five-minute/17-spell window and
+were not rerun for this feasibility assessment. Full-match possession accuracy remains unverified.
+If pursued, first verify checkpoint licensing and assess a tactical-view-appropriate detector
+against authorized, independently annotated, held-out ball visibility and bounding boxes. A
+possession classifier would separately require more independent permitted possession labels across
+intervals or matches. See [data handling](data_handling.md) for local-only asset restrictions.
+
+The local pilot can be rerun with the same six sample centers and 25-frame radius, using the
+separate Python 3.11 environment described in [data handling](data_handling.md). Set the variables
+to local inputs; keep the output directory outside the repository:
+
+```bash
+PYTHONPATH="src:$YOLOX_SOURCE" \
+  uv run --project video-pilot --only-group video-pilot \
+  python scripts/video_perception_pilot.py \
+  --video "$TACTICAL_VIDEO" \
+  --metadata "$ATD_META" \
+  --tracking "$ATD_RAW" \
+  --homography "$HOMOGRAPHY" \
+  --weights "$YOLOX_WEIGHTS" \
+  --output-dir "$VIDEO_PILOT_OUTPUT" \
+  --anchor early=13050 \
+  --anchor transition=13704 \
+  --anchor tracked_mid=15000 \
+  --anchor stable=15750 \
+  --anchor tracking_gap=17163 \
+  --anchor difficult_gap=17641 \
+  --radius-frames 25 \
+  --step-frames 5 \
+  --confidence 0.1 \
+  --nms-threshold 0.45 \
+  --threads 8
+```
+
 ## Next evaluation
 
 The full-match candidate is now reproducible from the local tactical inputs, but no permitted
