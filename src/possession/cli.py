@@ -94,7 +94,23 @@ def _check_environment(_: argparse.Namespace) -> int:
 def _validate_data(args: argparse.Namespace) -> int:
     data = load_tracking(args.metadata, args.tracking, args.frames)
     print(f"tracking: {data.n_frames} aligned frames, {data.players.shape[1]} track slots")
-    print(f"ball visibility: {np.isfinite(data.ball).all(axis=1).mean():.1%}")
+    print(
+        f"player speed: {data.source_speed_unit} -> {data.speed_unit} "
+        f"(factor {data.speed_conversion_factor:g})"
+    )
+    print(
+        "out-of-range coordinate observations rejected: "
+        f"{data.player_coordinate_out_of_range_observations} player "
+        f"({data.player_coordinate_out_of_range_components} components), "
+        f"{data.ball_coordinate_out_of_range_observations} ball "
+        f"({data.ball_coordinate_out_of_range_components} components)"
+    )
+    usable_ball_frames = int(np.isfinite(data.ball).all(axis=1).sum())
+    raw_ball_frames = usable_ball_frames + data.ball_coordinate_out_of_range_observations
+    print(
+        f"ball observations: {raw_ball_frames / data.n_frames:.1%} raw complete; "
+        f"{usable_ball_frames / data.n_frames:.1%} usable after coordinate validation"
+    )
     if args.homography:
         matrices, _, valid = load_homography(args.homography, args.frames)
         print(f"homography: {len(matrices)} frames, {valid.mean():.1%} valid")
@@ -102,7 +118,10 @@ def _validate_data(args: argparse.Namespace) -> int:
         events = load_smart_tagging(args.smart_tagging)
         masks = tagging_context(events, args.frames)
         set_piece_frames = int(masks["tagged_set_piece"].sum())
-        print(f"Smart Tagging: {len(events)} intervals, {set_piece_frames} set-piece frames")
+        print(
+            f"Smart Tagging context only (not possession labels): {len(events)} intervals, "
+            f"{set_piece_frames} set-piece frames"
+        )
     return 0
 
 

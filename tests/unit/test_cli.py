@@ -9,7 +9,10 @@ def test_cli_build_cache_predict_and_validate_submission_smoke(tmp_path):
     output = tmp_path / "submission.csv"
     metadata.write_text(
         '<Root><Team id="home"/><Team id="away"/>'
-        '<Player teamId="home"/><Player teamId="away"/></Root>',
+        '<Player teamId="home"/><Player teamId="away"/>'
+        '<Sensor id="speed"><Channels><Channel id="s">'
+        "<Name>speed_m_s</Name><Unit>m/s</Unit>"
+        "</Channel></Channels></Sensor></Root>",
         encoding="utf-8",
     )
     tracking.write_text(

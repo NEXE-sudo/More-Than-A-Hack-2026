@@ -2,10 +2,14 @@
 
 ## Inference path
 
-`data.loaders` reads the ATD metadata XML and frame records into aligned arrays. Validation checks
-contiguous frame IDs, team assignments, pairwise coordinate missingness, finite values, and
-normalized coordinate limits. `features.tracking` computes pitch-metre distances, local counts,
-team speeds, ball motion, and missingness indicators using vectorized NumPy operations.
+`data.loaders` reads the ATD metadata XML and frame records into aligned arrays. It converts the
+metadata-declared player speed channel from km/h to canonical m/s once at ingestion. Finite
+coordinate pairs outside the schema's normalized `[0,1]` range are counted and rejected as missing
+observations (including the player's associated speed); frame records and indices are preserved.
+Validation checks contiguous frame IDs, team assignments, pairwise coordinate missingness, finite
+values, canonical speed units, and normalized coordinate limits. `features.tracking` computes
+pitch-metre distances, local counts, team speeds, ball motion, and missingness indicators using
+vectorized NumPy operations.
 
 `models.baseline.evidence_from_features` is the default, unchanged nearest-distance evidence model.
 `models.baseline.revised_evidence_from_features` is opt-in and combines:
@@ -54,10 +58,10 @@ requires the original source paths and matching feature settings; model/decoder 
 invalidate features because they do not affect extraction. Output writing validates exact frame
 order, count, label alphabet, and `frame,label` CSV formatting.
 
-## Gated-data limitation
+## Gated-data boundary
 
-The tactical match tracking bundle is not present in this workspace. The official scorer and
-public baseline outputs are accessible through the sibling official checkout, but this project's
-candidate pipeline cannot be validated against full-match tracking or private labels yet. The
-synthetic generator and experiment matrix are for reproducible engineering tests only, not a
-substitute for real-match evidence.
+The tactical match tracking bundle is local-only and must not be committed or redistributed. The
+candidate pipeline consumes tactical inputs only; broadcast assets are not synchronized and are
+not used. The synthetic generator and experiment matrix are for reproducible engineering tests,
+not a substitute for real-match evidence. Public labels cover only the opening five minutes, so
+full-match accuracy remains unverified without permitted full-match ground truth.

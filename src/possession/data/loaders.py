@@ -1,6 +1,7 @@
 """Standard-library loaders for the official Metrica tracking sidecar formats."""
 
 import csv
+import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from possession.data.validation import TrackingData, validate_tracking
 
 MISSING_TOKENS = {"N", "NAN", ""}
 HOMOGRAPHY_COLUMNS = [f"h{row}{col}" for row in range(3) for col in range(3)]
+CANONICAL_SPEED_UNIT = "m/s"
 
 
 def _parse_group(text: str) -> tuple[float, float, float]:
@@ -23,6 +25,33 @@ def _parse_group(text: str) -> tuple[float, float, float]:
     if len(values) != 3:
         raise ValueError(f"expected x,y,speed tracking group, found {text!r}")
     return values[0], values[1], values[2]
+
+
+def _speed_conversion(root: ET.Element, metadata_path: Path) -> tuple[str, float]:
+    speed_sensors = [sensor for sensor in root.iter("Sensor") if sensor.get("id") == "speed"]
+    if len(speed_sensors) != 1:
+        raise ValueError(f"{metadata_path}: expected exactly one speed sensor")
+    channels = list(speed_sensors[0].iter("Channel"))
+    if len(channels) != 1:
+        raise ValueError(f"{metadata_path}: expected exactly one speed channel")
+    channel = channels[0]
+    name = channel.findtext("Name", "").strip().casefold()
+    unit = channel.findtext("Unit", "").strip().casefold()
+    if name not in {"speed_kph", "speed_m_s", "speed_mps"}:
+        raise ValueError(f"{metadata_path}: unsupported speed channel name {name!r}")
+    if unit in {"kph", "km/h", "kmh"}:
+        if name != "speed_kph":
+            raise ValueError(
+                f"{metadata_path}: speed channel name {name!r} conflicts with unit {unit!r}"
+            )
+        return unit, 1.0 / 3.6
+    if unit in {"m/s", "mps", "m s-1"}:
+        if name == "speed_kph":
+            raise ValueError(
+                f"{metadata_path}: speed channel name {name!r} conflicts with unit {unit!r}"
+            )
+        return unit, 1.0
+    raise ValueError(f"{metadata_path}: unsupported speed channel unit {unit!r}")
 
 
 def load_tracking(
@@ -47,6 +76,7 @@ def load_tracking(
     players = list(root.iter("Player"))
     if len(team_ids) != 2 or not players or len(set(team_ids)) != 2 or None in team_ids:
         raise ValueError(f"{meta}: expected two teams and at least one Player entry")
+    source_speed_unit, speed_conversion_factor = _speed_conversion(root, meta)
     team_lookup = {team_ids[0]: 0, team_ids[1]: 1}
     try:
         team_assignments = np.asarray(
@@ -60,6 +90,10 @@ def load_tracking(
     track_positions = np.full((expected_frames, n_tracks, 2), np.nan, dtype=np.float32)
     track_speeds = np.full((expected_frames, n_tracks), np.nan, dtype=np.float32)
     ball_positions = np.full((expected_frames, 2), np.nan, dtype=np.float32)
+    player_coordinate_out_of_range_observations = 0
+    player_coordinate_out_of_range_components = 0
+    ball_coordinate_out_of_range_observations = 0
+    ball_coordinate_out_of_range_components = 0
     row_count = 0
     with raw.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -80,10 +114,28 @@ def load_tracking(
                 )
             for track, group in enumerate(groups):
                 x, y, speed = _parse_group(group)
-                track_positions[row_count, track] = (x, y)
-                track_speeds[row_count, track] = speed
+                canonical_speed = speed * speed_conversion_factor
+                if np.isinf(canonical_speed):
+                    raise ValueError(f"{raw}:{line_number}: player speeds contain infinite values")
+                if np.isfinite(canonical_speed) and canonical_speed < 0:
+                    raise ValueError(f"{raw}:{line_number}: player speeds cannot be negative")
+                if np.isfinite((x, y)).all() and not (0 <= x <= 1 and 0 <= y <= 1):
+                    player_coordinate_out_of_range_observations += 1
+                    player_coordinate_out_of_range_components += int(not 0 <= x <= 1) + int(
+                        not 0 <= y <= 1
+                    )
+                    canonical_speed = np.nan
+                else:
+                    track_positions[row_count, track] = (x, y)
+                track_speeds[row_count, track] = canonical_speed
             ball_x, ball_y, _ = _parse_group(parts[2])
-            ball_positions[row_count] = (ball_x, ball_y)
+            if np.isfinite((ball_x, ball_y)).all() and not (0 <= ball_x <= 1 and 0 <= ball_y <= 1):
+                ball_coordinate_out_of_range_observations += 1
+                ball_coordinate_out_of_range_components += int(not 0 <= ball_x <= 1) + int(
+                    not 0 <= ball_y <= 1
+                )
+            else:
+                ball_positions[row_count] = (ball_x, ball_y)
             row_count += 1
     if row_count != expected_frames:
         raise ValueError(f"{raw}: expected {expected_frames} frames, found {row_count}")
@@ -99,8 +151,26 @@ def load_tracking(
         ball=ball_positions,
         player_teams=team_assignments,
         player_speed=track_speeds,
+        source_speed_unit=source_speed_unit,
+        speed_unit=CANONICAL_SPEED_UNIT,
+        speed_conversion_factor=speed_conversion_factor,
+        player_coordinate_out_of_range_observations=player_coordinate_out_of_range_observations,
+        player_coordinate_out_of_range_components=player_coordinate_out_of_range_components,
+        ball_coordinate_out_of_range_observations=ball_coordinate_out_of_range_observations,
+        ball_coordinate_out_of_range_components=ball_coordinate_out_of_range_components,
     )
     validate_tracking(data, expected_frames)
+    if player_coordinate_out_of_range_observations or ball_coordinate_out_of_range_observations:
+        warnings.warn(
+            "rejected "
+            f"{player_coordinate_out_of_range_observations} player and "
+            f"{ball_coordinate_out_of_range_observations} ball observations outside normalized "
+            f"[0, 1] coordinates ({player_coordinate_out_of_range_components} player and "
+            f"{ball_coordinate_out_of_range_components} ball components); frame records were "
+            "preserved",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return data
 
 

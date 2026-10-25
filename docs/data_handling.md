@@ -2,11 +2,28 @@
 
 ## Boundary and restrictions
 
-The official checkout is the reference for terms and formats. This project reads the permitted
-tactical tracking bundle only when a user supplies paths. Never upload videos, tracking, labels, or
-extracts to hosted services; keep match data, private labels, caches, and generated submissions out
-of Git. Broadcast tracking has a separate, unsynchronized timeline and is not accepted as a
-tactical frame source.
+The official checkout's `DATA.md` and `RULES.md` are the references for formats and terms. This
+project reads the permitted local tactical bundle only when a user supplies paths. The root
+`Data/` and `data/` paths are ignored by Git on case-sensitive and case-insensitive filesystems.
+Never commit or redistribute videos, tracking, labels, homographies, caches, predictions, or
+data-derived exports, and do not upload them to hosted services. Keep generated files in the
+ignored `outputs/`, `cache/`, or `artifacts/` directories. Broadcast tracking has a separate,
+unsynchronized timeline and is not accepted as a tactical frame source.
+
+The `video-pilot` dependency group in `pyproject.toml` is for local detector feasibility
+experiments only; it is not a project runtime extra and is not used by the production possession
+pipeline. Install it into an isolated Python 3.11 environment with
+`python -m pip install --upgrade pip` followed by `python -m pip install --group video-pilot`.
+It pins the Intel-Mac-compatible CPU stack and its NumPy 1.x ABI separately from the production
+environment. YOLOX source and weights are not
+installed by this group; acquire them separately for a local pilot, and keep downloaded weights,
+extracted frames, detections, and derived feature tables outside the repository. Verify the code
+and weight licenses before use or redistribution.
+
+The standalone `scripts/video_perception_pilot.py` accepts explicit local video, tracking, and
+homography paths and writes its sampled feature CSV, summary, and inspection frames only to the
+requested output directory. Use an ignored or external directory; this feasibility tool is not
+part of the possession prediction CLI or production path.
 
 ## Frame conventions
 
@@ -26,12 +43,22 @@ and must not be used directly as tactical output.
 ## Tracking representation and missingness
 
 The EPTS line format is `frame_id:player;player;...:ball`, with each object represented as
-`x,y,speed`. Coordinates are normalized to `[0,1]`; team membership is read from metadata in the
-same track-slot order. Track slots are fragmented tracklets, not stable player identities. `N` and
-`NaN` observations stay NaN in memory. Infinite/out-of-range coordinates and malformed records are
-errors rather than fabricated positions. A coordinate pair must be fully observed or fully missing;
-partial x/y observations are rejected. Missing speed is allowed, but infinite or negative speeds
-are not.
+`x,y,speed`. The official schema specifies normalized coordinates in `[0,1]`; team membership is
+read from metadata in the same track-slot order. Track slots are fragmented tracklets, not stable
+player identities. Finite, complete coordinate pairs within the inclusive range (including 0 and 1)
+are accepted. Fully missing `N`/`NaN` pairs remain missing. A finite pair outside the schema range
+is counted and warned about, then rejected in memory as a missing position; for a player its
+associated speed is also marked missing. The original tracking file and every frame record remain
+unchanged, so no frame is dropped or shifted and no coordinate is clipped. Partial coordinate
+pairs, infinite coordinate values, malformed groups, and malformed or non-contiguous frame records
+are fatal input errors.
+
+The metadata declares the player speed channel as `speed_kph` in `kph`. Internal speeds are
+canonicalized to metres per second at load time (`km/h / 3.6`), exactly once, before feature
+extraction and the dead-ball speed threshold. The loader checks the declared channel name and unit,
+records both the source unit and conversion factor in `TrackingData`, preserves missing speeds, and
+rejects unsupported or conflicting metadata. Already-metric `speed_m_s`/`speed_mps` inputs use a
+factor of 1.0. Infinite and negative speeds are rejected.
 
 Homography rows contain nine row-major matrix values, reprojection error and a `valid` flag. Invalid
 rows are retained as NaN and never projected. Smart Tagging is automatic phase/restart context, not
@@ -58,10 +85,10 @@ data. Rebuild caches after changing source files, extraction settings, or featur
 
 Tracking feature extraction uses float32 intermediates for coordinate scaling and distance matrices;
 precision is ample for pitch-metre distances and lowers peak memory for the approximately 199k-frame
-sequence. No real-match memory benchmark is claimed because the gated source bundle is unavailable.
+sequence. No memory benchmark is implied by this implementation detail.
 
 ## Ground truth
 
 The official public CSV covers only the opening five minutes and 17 possessions. It is used only
 for allowed evaluation, never as model input. The private full-match labels are unavailable and
-must not be inferred or sought.
+must not be inferred or sought; public-window scores do not establish full-match accuracy.

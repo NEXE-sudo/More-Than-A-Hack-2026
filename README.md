@@ -31,16 +31,34 @@ python -m pip install --no-deps -e .
 ```
 
 Set `REPO_ROOT` and `DATA_ROOT` for the official checkout and your locally supplied, permitted
-assets. Neither path is hard-coded:
+assets. `DATA_ROOT` must contain a `tactical/` directory. The bundle is local-only; the root
+`Data/` and `data/` spellings are ignored by Git, as are generated outputs and feature caches.
+Neither path is hard-coded:
 
 ```bash
 export REPO_ROOT=/path/to/more-than-a-hack-2027
 export DATA_ROOT=/path/to/match-data
 ```
 
-The expected bundle is described in the official [`DATA.md`](../more-than-a-hack-2027/DATA.md):
+For the project CLI, set each input path to the actual local file; the files need not be copied or
+moved into one directory:
+
+```bash
+export ATD_META=/path/to/local/BAR-ATH_tactical_atd.xml
+export ATD_RAW=/path/to/local/BAR-ATH_tactical_atd.txt
+export HOMOGRAPHY=/path/to/local/BAR-ATH_tactical_homography.csv
+export SMART_TAGGING=/path/to/local/BAR-ATH_tactical_smart_tagging.xml
+```
+
+The bundle layout is described in the official [`DATA.md`](../more-than-a-hack-2027/DATA.md):
 `tactical/BAR-ATH_tactical_atd.xml`, `tactical/BAR-ATH_tactical_atd.txt`, and optional homography
-and Smart Tagging files. Competition data and prediction outputs must not be committed.
+and Smart Tagging files. Use only the permitted local copy and keep the video, tracking, labels,
+homographies, caches, predictions, and any data-derived exports out of Git and external services.
+Do not redistribute supplied data or derived artifacts; follow the official
+[`RULES.md`](../more-than-a-hack-2027/RULES.md).
+The official baseline command expects the standard bundle layout. If the supplied archive was
+extracted into separate dataset folders, use a private local directory containing symlinks to the
+original files rather than copying or modifying gated assets.
 
 ## Commands
 
@@ -49,25 +67,23 @@ Run from any working directory after installation:
 ```bash
 possession check-environment
 possession validate-data \
-  --metadata "$DATA_ROOT/tactical/BAR-ATH_tactical_atd.xml" \
-  --tracking "$DATA_ROOT/tactical/BAR-ATH_tactical_atd.txt" \
-  --homography "$DATA_ROOT/tactical/BAR-ATH_tactical_homography.csv" \
-  --smart-tagging "$DATA_ROOT/tactical/BAR-ATH_tactical_smart_tagging.xml"
+  --metadata "$ATD_META" --tracking "$ATD_RAW" \
+  --homography "$HOMOGRAPHY" --smart-tagging "$SMART_TAGGING"
 
 # Reproduce the original baseline with its own implementation and gated tracking bundle
 possession run-baseline --repo-root "$REPO_ROOT" --data-root "$DATA_ROOT" \
   --output-dir outputs/official-baselines
 
 # Build a source-verified feature cache or generate a candidate
-possession build-features --metadata "$DATA_ROOT/tactical/BAR-ATH_tactical_atd.xml" \
-  --tracking "$DATA_ROOT/tactical/BAR-ATH_tactical_atd.txt" --config configs/default.toml \
+possession build-features --metadata "$ATD_META" \
+  --tracking "$ATD_RAW" --config configs/default.toml \
   --output cache/features.npz
-possession predict --metadata "$DATA_ROOT/tactical/BAR-ATH_tactical_atd.xml" \
-  --tracking "$DATA_ROOT/tactical/BAR-ATH_tactical_atd.txt" --output outputs/nexe.csv \
+possession predict --metadata "$ATD_META" \
+  --tracking "$ATD_RAW" --output outputs/nexe.csv \
   --config configs/default.toml
 # Or reuse the archive without reparsing tracking (source files are fingerprinted):
-possession predict --metadata "$DATA_ROOT/tactical/BAR-ATH_tactical_atd.xml" \
-  --tracking "$DATA_ROOT/tactical/BAR-ATH_tactical_atd.txt" \
+possession predict --metadata "$ATD_META" \
+  --tracking "$ATD_RAW" \
   --feature-cache cache/features.npz --output outputs/nexe.csv \
   --config configs/default.toml
 
@@ -126,11 +142,10 @@ an occlusion or Smart Tagging interval alone never becomes D.
 
 ## Limitations and reproducibility
 
-The gated tracking bundle is not present in this workspace. Consequently ATD parsing, full-match
-candidate generation and local baseline regeneration are implemented but unexecuted on match
-data. Synthetic tests and evaluation of the committed public baseline outputs are verifiable here;
-no candidate was measured on tracking data. No trained classifier is included: the public labels
-cover only 17 possessions and are insufficient evidence for generalization. Predictions are
+The gated tracking bundle is supplied locally in this workspace but is not versioned. Its use
+requires explicit input paths, and generated predictions and derived diagnostics must remain local.
+The public labels cover only the opening five minutes and 17 possessions; they are not evidence of
+full-match accuracy or generalization. No trained classifier is included. Predictions are
 deterministic; all decoding settings are explicit. See [docs/experiments.md](docs/experiments.md)
 for measured results and blockers.
 # More-Than-A-Hack-2026

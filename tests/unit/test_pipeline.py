@@ -11,7 +11,10 @@ def test_pipeline_writes_deterministic_submission_from_synthetic_tracking(tmp_pa
     tracking = tmp_path / "tracking.txt"
     metadata.write_text(
         '<Root><Team id="home"/><Team id="away"/>'
-        '<Player teamId="home"/><Player teamId="away"/></Root>',
+        '<Player teamId="home"/><Player teamId="away"/>'
+        '<Sensor id="speed"><Channels><Channel id="s">'
+        "<Name>speed_m_s</Name><Unit>m/s</Unit>"
+        "</Channel></Channels></Sensor></Root>",
         encoding="utf-8",
     )
     tracking.write_text(

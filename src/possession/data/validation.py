@@ -16,6 +16,13 @@ class TrackingData:
     ball: np.ndarray
     player_teams: np.ndarray
     player_speed: np.ndarray
+    source_speed_unit: str = "m/s"
+    speed_unit: str = "m/s"
+    speed_conversion_factor: float = 1.0
+    player_coordinate_out_of_range_observations: int = 0
+    player_coordinate_out_of_range_components: int = 0
+    ball_coordinate_out_of_range_observations: int = 0
+    ball_coordinate_out_of_range_components: int = 0
 
     @property
     def n_frames(self) -> int:
@@ -42,6 +49,10 @@ def validate_tracking(data: TrackingData, expected_frames: int | None = None) ->
         raise ValueError("player_teams must assign every track to home=0 or away=1")
     if data.player_speed.shape != (n_frames, n_tracks):
         raise ValueError("player_speed must have shape (frames, tracks)")
+    if data.speed_unit != "m/s":
+        raise ValueError("player speeds must use canonical m/s units")
+    if not np.isfinite(data.speed_conversion_factor) or data.speed_conversion_factor <= 0:
+        raise ValueError("speed_conversion_factor must be finite and positive")
     for name, values in (("players", data.players), ("ball", data.ball)):
         if np.isinf(values).any():
             raise ValueError(f"{name} coordinates contain infinite values")

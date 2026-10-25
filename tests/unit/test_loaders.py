@@ -6,16 +6,25 @@ import pytest
 from possession.data.loaders import load_homography, load_smart_tagging, load_tracking
 
 
-def write_tracking_files(folder: Path, frames=("1", "2")) -> tuple[Path, Path]:
+def write_tracking_files(
+    folder: Path,
+    frames=("1", "2"),
+    *,
+    speed_name="speed_kph",
+    speed_unit="kph",
+) -> tuple[Path, Path]:
     metadata = folder / "meta.xml"
     raw = folder / "raw.txt"
     metadata.write_text(
         '<Root><Team id="home"/><Team id="away"/>'
-        '<Player teamId="home"/><Player teamId="away"/></Root>',
+        '<Player teamId="home"/><Player teamId="away"/>'
+        '<Sensor id="speed"><Channels><Channel id="s">'
+        f"<Name>{speed_name}</Name><Unit>{speed_unit}</Unit>"
+        "</Channel></Channels></Sensor></Root>",
         encoding="utf-8",
     )
     raw.write_text(
-        "".join(f"{frame}:0.1,0.2,1;N:0.3,0.4,0\n" for frame in frames),
+        "".join(f"{frame}:0.1,0.2,3.6;N:0.3,0.4,0\n" for frame in frames),
         encoding="utf-8",
     )
     return metadata, raw
@@ -23,15 +32,117 @@ def write_tracking_files(folder: Path, frames=("1", "2")) -> tuple[Path, Path]:
 
 def test_tracking_loader_aligns_frames_and_keeps_missing_observations(tmp_path):
     metadata, raw = write_tracking_files(tmp_path)
+    raw.write_text(
+        "1:0.1,0.2,3.6;N:0.3,0.4,0\n2:0.1,0.2,18;N:0.3,0.4,0\n",
+        encoding="utf-8",
+    )
     data = load_tracking(metadata, raw, expected_frames=2)
     assert data.frame_ids.tolist() == [0, 1]
     assert data.player_teams.tolist() == [0, 1]
     assert np.isnan(data.players[:, 1]).all()
     np.testing.assert_allclose(data.ball, [[0.3, 0.4], [0.3, 0.4]])
+    assert data.player_speed[:, 0].tolist() == pytest.approx([1.0, 5.0])
+    assert data.source_speed_unit == "kph"
+    assert data.speed_unit == "m/s"
+    assert data.speed_conversion_factor == pytest.approx(1 / 3.6)
+
+
+def test_tracking_loader_preserves_already_metric_speed_values(tmp_path):
+    metadata, raw = write_tracking_files(
+        tmp_path,
+        speed_name="speed_m_s",
+        speed_unit="m/s",
+    )
+    data = load_tracking(metadata, raw, expected_frames=2)
+    assert data.player_speed[:, 0].tolist() == pytest.approx([3.6, 3.6])
+    assert data.source_speed_unit == "m/s"
+    assert data.speed_conversion_factor == 1.0
+
+
+def test_tracking_loader_rejects_conflicting_speed_metadata(tmp_path):
+    metadata, raw = write_tracking_files(
+        tmp_path,
+        speed_name="speed_kph",
+        speed_unit="m/s",
+    )
+    with pytest.raises(ValueError, match="conflicts with unit"):
+        load_tracking(metadata, raw, expected_frames=2)
+
+
+def test_tracking_loader_preserves_missing_speed_values(tmp_path):
+    metadata, raw = write_tracking_files(tmp_path)
+    raw.write_text(
+        "1:0.1,0.2,nan;N:0.3,0.4,0\n2:0.1,0.2,inf;N:0.3,0.4,0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="speeds contain infinite"):
+        load_tracking(metadata, raw, expected_frames=2)
+
+    raw.write_text(
+        "1:0.1,0.2,nan;N:0.3,0.4,0\n2:N;N:0.3,0.4,0\n",
+        encoding="utf-8",
+    )
+    data = load_tracking(metadata, raw, expected_frames=2)
+    assert np.isnan(data.player_speed[:, 0]).all()
+
+    raw.write_text(
+        "1:0.1,0.2,-0.1;N:0.3,0.4,0\n2:0.1,0.2,1;N:0.3,0.4,0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="speeds cannot be negative"):
+        load_tracking(metadata, raw, expected_frames=2)
+
+
+def test_tracking_loader_rejects_unsupported_speed_units(tmp_path):
+    metadata, raw = write_tracking_files(
+        tmp_path,
+        speed_name="speed_furlongs",
+        speed_unit="furlongs/hour",
+    )
+    with pytest.raises(ValueError, match="unsupported speed channel name"):
+        load_tracking(metadata, raw, expected_frames=2)
+
+
+def test_tracking_loader_flags_and_rejects_out_of_range_observations(tmp_path):
+    metadata, raw = write_tracking_files(tmp_path)
+    raw.write_text(
+        "1:1.01,0.2,3.6;0.4,0.5,7.2:-0.01,0.4,0\n2:0,1,0;1,1,0:1,0,0\n",
+        encoding="utf-8",
+    )
+    with pytest.warns(RuntimeWarning, match="rejected 1 player and 1 ball observations"):
+        data = load_tracking(metadata, raw, expected_frames=2)
+
+    assert data.frame_ids.tolist() == [0, 1]
+    assert np.isnan(data.players[0, 0]).all()
+    assert np.isnan(data.player_speed[0, 0])
+    assert np.isnan(data.ball[0]).all()
+    assert data.player_coordinate_out_of_range_observations == 1
+    assert data.player_coordinate_out_of_range_components == 1
+    assert data.ball_coordinate_out_of_range_observations == 1
+    assert data.ball_coordinate_out_of_range_components == 1
+    np.testing.assert_array_equal(data.players[1], [[0, 1], [1, 1]])
+    np.testing.assert_array_equal(data.ball[1], [1, 0])
+
+
+def test_tracking_loader_rejects_malformed_or_partial_coordinate_values(tmp_path):
+    metadata, raw = write_tracking_files(tmp_path)
+    raw.write_text("1:bad,0.2,1;N:0.3,0.4,0\n2:0.1,0.2,1;N:0.3,0.4,0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid tracking coordinate group"):
+        load_tracking(metadata, raw, expected_frames=2)
+
+    raw.write_text("1:nan,0.2,1;N:0.3,0.4,0\n2:0.1,0.2,1;N:0.3,0.4,0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="both coordinates or neither"):
+        load_tracking(metadata, raw, expected_frames=2)
 
 
 def test_tracking_loader_rejects_frame_gaps(tmp_path):
     metadata, raw = write_tracking_files(tmp_path, frames=("1", "3"))
+    with pytest.raises(ValueError, match="contiguous"):
+        load_tracking(metadata, raw, expected_frames=2)
+
+
+def test_tracking_loader_rejects_duplicated_frames(tmp_path):
+    metadata, raw = write_tracking_files(tmp_path, frames=("1", "1"))
     with pytest.raises(ValueError, match="contiguous"):
         load_tracking(metadata, raw, expected_frames=2)
 
