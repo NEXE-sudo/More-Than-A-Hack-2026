@@ -222,6 +222,11 @@ def test_experiment_outputs_are_consistent_and_reproducible(tmp_path):
                     assert _csv_value(raw, json_row[field]) == json_row[field]
 
     first_report = first_paths["report"].read_text(encoding="utf-8")
+    second_report = second_paths["report"].read_text(encoding="utf-8")
+    assert first_report == second_report, (
+        "Markdown report reproducibility failure: identical runs produced different reports"
+    )
+
     aggregate = first_report.split("## Aggregate results", maxsplit=1)[1].split(
         "## Scenario-level results", maxsplit=1
     )
